@@ -1,0 +1,18 @@
+{
+  "name": "Recipetor",
+  "short_name": "Recipetor",
+  "description": "Recipetor recipe app",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [
+    {
+      "src": "/recipetor.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
