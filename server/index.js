@@ -201,6 +201,14 @@ export function createServer({
       }
     }
 
+    const deleteMatch = pathname.match(/^\/api\/recipes\/([^/]+)$/);
+    if (deleteMatch && request.method === "DELETE") {
+      checkSameOrigin(request);
+      const deleted = store.deleteRecipe(deleteMatch[1]);
+      if (!deleted) return jsonResponse(response, 404, { error: "Recipe not found." });
+      return jsonResponse(response, 200, { ok: true });
+    }
+
     if (pathname.startsWith("/api/")) {
       return jsonResponse(response, 404, { error: "API endpoint not found." });
     }

@@ -127,6 +127,22 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
       .map(({ id }) => getRecipe(id));
   }
 
+  function deleteRecipe(id) {
+    const existing = getRecipe(id);
+    if (!existing) return false;
+
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.prepare("DELETE FROM recipe_sources WHERE recipe_id = ?").run(id);
+      db.prepare("DELETE FROM recipes WHERE id = ?").run(id);
+      db.exec("COMMIT");
+      return true;
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   function saveImported(url, recipe) {
     const titleKey = normalizeText(recipe.title);
     const recipeFingerprint = fingerprint(titleKey, recipe.ingredients);
@@ -194,6 +210,7 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
 
   return {
     close: () => db.close(),
+    deleteRecipe,
     getBySource,
     list,
     saveImported,

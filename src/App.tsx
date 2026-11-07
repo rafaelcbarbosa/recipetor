@@ -247,6 +247,18 @@ function App() {
     setFavorites((current) => current.includes(id) ? current.filter((favorite) => favorite !== id) : [...current, id]);
   }
 
+  async function deleteRecipe(id: string) {
+    if (!window.confirm("Delete this recipe?")) return;
+    const response = await fetch(`/api/recipes/${id}`, { method: "DELETE" });
+    if (!response.ok) {
+      setNotice("Couldn't delete the recipe. Try again.");
+      return;
+    }
+    setSelectedRecipe(null);
+    setSavedRecipes((current) => current.filter((recipe) => recipe.id !== id));
+    setNotice("Recipe deleted.");
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -377,7 +389,7 @@ function App() {
             <p className="modal-description">{selectedRecipe.description}</p>
             <p className="modal-source">{selectedRecipe.isExample === false ? "Saved from" : "Example source"} <strong>{selectedRecipe.source}</strong> {selectedRecipe.isExample !== false && <span className="example-tag inline-tag">EXAMPLE</span>}</p>
             {selectedRecipe.sourceUrls && <div className="source-links"><strong>Instagram links</strong>{selectedRecipe.sourceUrls.map((sourceUrl, index) => <a key={sourceUrl} href={sourceUrl} target="_blank" rel="noreferrer">Source {index + 1} <Icon name="arrow" size={13} /></a>)}</div>}
-            <div className="modal-actions"><button className="primary-button" onClick={() => toggleFavorite(selectedRecipe.id)}><Icon name="bookmark" /> {favorites.includes(selectedRecipe.id) ? "Saved to favorites" : "Save recipe"}</button><button className="secondary-button" onClick={() => void shareRecipe(selectedRecipe)}><Icon name="share" /> Share</button></div>
+            <div className="modal-actions"><button className="primary-button" onClick={() => toggleFavorite(selectedRecipe.id)}><Icon name="bookmark" /> {favorites.includes(selectedRecipe.id) ? "Saved to favorites" : "Save recipe"}</button><button className="secondary-button" onClick={() => void shareRecipe(selectedRecipe)}><Icon name="share" /> Share</button><button className="secondary-button delete-button" onClick={() => void deleteRecipe(selectedRecipe.id)}><Icon name="close" /> Delete</button></div>
             <div className="modal-recipe-columns">
               <div>
                 <div className="ingredients-header">

@@ -142,7 +142,9 @@ h1 { margin-bottom: 7px; font-family: Georgia, "Times New Roman", serif; font-si
 .source-links a { display: inline-flex; align-items: center; gap: 3px; color: #bc5737; text-decoration: none; }
 .source-links a:hover { text-decoration: underline; }
 .inline-tag { position: static; display: inline-block; padding: 3px 5px; font-size: 7px; }
-.modal-actions { display: flex; gap: 8px; margin: 17px 0 23px; }
+.modal-actions { display: flex; gap: 8px; margin: 17px 0 23px; flex-wrap: wrap; }
+.delete-button { background: #fdf3f1; color: #c4664a; border: 1px solid #f3d9d2; }
+.delete-button:hover { background: #fbeae6; color: #b04a32; }
 .modal-recipe-columns { display: grid; grid-template-columns: .8fr 1.2fr; gap: 25px; padding-top: 18px; border-top: 1px solid #eee9e1; }
 .modal-recipe-columns h3 { margin-bottom: 11px; font-size: 12px; font-weight: 700; }
 .modal-recipe-columns h3 span { color: #a39b90; font-weight: 500; }
