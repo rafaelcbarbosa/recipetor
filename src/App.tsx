@@ -126,6 +126,14 @@ function App() {
   const [serverState, setServerState] = useState<"checking" | "ready" | "hermes-missing" | "offline">("checking");
   const [isImporting, setIsImporting] = useState(false);
   const [portions, setPortions] = useState<number | null>(null);
+  const [commitInfo, setCommitInfo] = useState<{ hash: string; date: string; message: string } | null>(null);
+
+  useEffect(() => {
+    fetch("/commit-info.json")
+      .then((res) => res.json())
+      .then((data) => setCommitInfo(data))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -369,7 +377,19 @@ function App() {
             </div> : <div className="empty-state"><span className="empty-icon"><Icon name={showFavorites ? "bookmark" : "search"} size={22} /></span><h3>{showFavorites ? "No favorites yet" : "No recipes found"}</h3><p>{showFavorites ? "Tap the bookmark on a recipe to keep it close." : "Try another search or choose a different category."}</p></div>}
             <p className="sample-note">{savedRecipes.length ? "Add another Instagram recipe whenever inspiration strikes." : "These example recipes are here to help you explore."}</p>
           </section>
-          <footer className="page-footer"><span>Made for the recipes you want to make.</span><span>Simple, free, and yours.</span></footer>
+          <footer className="page-footer">
+            <span>Made for the recipes you want to make.</span>
+            <span>Simple, free, and yours.</span>
+            {commitInfo && (
+              <span className="commit-info">
+                <Icon name="link" size={12} />
+                <a href={`https://github.com/recipetor/recipetor/commit/${commitInfo.hash}`} target="_blank" rel="noopener noreferrer" title={commitInfo.message}>
+                  {commitInfo.hash}
+                </a>
+                <span className="commit-date">{new Date(commitInfo.date).toLocaleDateString()}</span>
+              </span>
+            )}
+          </footer>
         </div>
 
         <nav className="mobile-nav" aria-label="Mobile navigation">

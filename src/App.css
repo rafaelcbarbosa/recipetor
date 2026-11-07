@@ -125,7 +125,11 @@ h1 { margin-bottom: 7px; font-family: Georgia, "Times New Roman", serif; font-si
 .empty-icon { display: grid; width: 42px; height: 42px; margin: 0 auto 12px; place-items: center; border-radius: 13px; background: #f2eee8; color: #83796d; }
 .empty-state h3 { margin-bottom: 5px; font-family: Georgia, serif; font-size: 17px; }
 .empty-state p { margin: 0; color: #91897e; font-size: 11px; }
-.page-footer { display: flex; justify-content: space-between; margin-top: 34px; padding-top: 14px; border-top: 1px solid #ece7df; color: #a29a8f; font-size: 10px; }
+.page-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 34px; padding-top: 14px; border-top: 1px solid #ece7df; color: #a29a8f; font-size: 10px; }
+.commit-info { display: flex; align-items: center; gap: 6px; color: #a29a8f; font-size: 10px; }
+.commit-info a { color: #a29a8f; text-decoration: none; font-family: monospace; }
+.commit-info a:hover { text-decoration: underline; color: #bc5737; }
+.commit-date { color: #c4bcaf; }
 
 .modal-backdrop { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 24px; background: #211b15a6; backdrop-filter: blur(3px); }
 .recipe-modal { position: relative; display: grid; grid-template-columns: 220px minmax(0, 1fr); width: min(790px, 100%); max-height: min(720px, 90vh); overflow: auto; border-radius: 18px; background: #fff; box-shadow: 0 24px 90px #130e0a40; }
