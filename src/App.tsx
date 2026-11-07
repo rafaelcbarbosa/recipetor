@@ -298,7 +298,53 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <a className="brand" href="#" aria-label="Recipetor home">
-          <span className="brand-mark">r<span>.</span></span>
+          <svg className="brand-icon" viewBox="0 0 512 512" aria-hidden="true">
+            <defs>
+              <linearGradient id="burritoBody" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor="#D4A574" stopOpacity={1} />
+                <stop offset="100%" stopColor="#C49564" stopOpacity={1} />
+              </linearGradient>
+              <linearGradient id="burritoFilling" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor="#E8B87D" stopOpacity={1} />
+                <stop offset="100%" stopColor="#D8A86D" stopOpacity={1} />
+              </linearGradient>
+              <linearGradient id="cheese" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor="#FFD700" stopOpacity={1} />
+                <stop offset="100%" stopColor="#F0C000" stopOpacity={1} />
+              </linearGradient>
+              <linearGradient id="beans" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor="#4A2C1A" stopOpacity={1} />
+                <stop offset="100%" stopColor="#3A1C0A" stopOpacity={1} />
+              </linearGradient>
+              <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+                <feDropShadow dx={0} dy={2} stdDeviation={3} floodColor="#000000" floodOpacity={0.2} />
+              </filter>
+            </defs>
+            <path d="M120 180 Q120 120 180 120 L332 120 Q392 120 392 180 L392 332 Q392 392 332 392 L180 392 Q120 392 120 332 Z" fill="url(#burritoBody)" filter="url(#shadow)" />
+            <path d="M140 180 Q140 140 180 140 L332 140 Q372 140 372 180 L372 200 Q372 220 332 220 L180 220 Q140 220 140 180 Z" fill="#B8956A" opacity={0.6} />
+            <path d="M160 160 Q160 145 180 145 L332 145 Q352 145 352 160 L352 175 Q352 185 332 185 L180 185 Q160 185 160 160 Z" fill="url(#burritoFilling)" />
+            <path d="M190 155 Q200 150 210 155 Q220 160 230 155 Q240 150 250 155 Q260 160 270 155 Q280 150 290 155 Q300 160 310 155 Q320 150 330 155" stroke="url(#cheese)" strokeWidth={8} fill="none" strokeLinecap="round" />
+            <circle cx={200} cy={165} r={6} fill="url(#beans)" />
+            <circle cx={240} cy={158} r={5} fill="url(#beans)" />
+            <circle cx={280} cy={162} r={5} fill="url(#beans)" />
+            <circle cx={310} cy={157} r={4} fill="url(#beans)" />
+            <ellipse cx={220} cy={168} rx={3} ry={2} fill="#F5F0E8" />
+            <ellipse cx={260} cy={170} rx={2.5} ry={1.8} fill="#F5F0E8" />
+            <ellipse cx={300} cy={168} rx={2.5} ry={1.8} fill="#F5F0E8" />
+            <path d="M185 170 Q180 165 185 160 Q190 165 185 170" fill="#4CAF50" opacity={0.8} />
+            <path d="M255 175 Q250 170 255 165 Q260 170 255 175" fill="#4CAF50" opacity={0.8} />
+            <path d="M295 172 Q290 167 295 162 Q300 167 295 172" fill="#4CAF50" opacity={0.8} />
+            <circle cx={210} cy={260} r={18} fill="#2D2D2D" />
+            <circle cx={302} cy={260} r={18} fill="#2D2D2D" />
+            <circle cx={215} cy={255} r={6} fill="#FFFFFF" />
+            <circle cx={307} cy={255} r={6} fill="#FFFFFF" />
+            <path d="M210 300 Q256 330 302 300" stroke="#2D2D2D" strokeWidth={4} fill="none" strokeLinecap="round" />
+            <ellipse cx={175} cy={275} rx={15} ry={8} fill="#E8A8A8" opacity={0.5} />
+            <ellipse cx={337} cy={275} rx={15} ry={8} fill="#E8A8A8" opacity={0.5} />
+            <path d="M256 100 Q250 80 256 60" stroke="#FFFFFF" strokeWidth={3} fill="none" opacity={0.6} strokeLinecap="round" />
+            <path d="M230 110 Q225 90 230 70" stroke="#FFFFFF" strokeWidth={2} fill="none" opacity={0.4} strokeLinecap="round" />
+            <path d="M282 110 Q287 90 282 70" stroke="#FFFFFF" strokeWidth={2} fill="none" opacity={0.4} strokeLinecap="round" />
+          </svg>
           <span>recipetor</span>
         </a>
         <div className="sidebar-label">YOUR KITCHEN</div>
@@ -315,13 +361,62 @@ function App() {
         </nav>
         <div className="sidebar-bottom">
           <div className="privacy-note"><span className="privacy-dot" /> Just your recipes. No personal profile needed.</div>
-          <div className="account-chip"><span className="avatar">R</span><span><strong>Your kitchen</strong><small>Private recipe box</small></span></div>
+          <div className="account-chip"><span className="avatar"><svg className="avatar-icon" viewBox="0 0 512 512" aria-hidden="true"><defs><linearGradient id="burritoBody" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor="#D4A574" stopOpacity={1} /><stop offset="100%" stopColor="#C49564" stopOpacity={1} /></linearGradient><linearGradient id="burritoFilling" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor="#E8B87D" stopOpacity={1} /><stop offset="100%" stopColor="#D8A86D" stopOpacity={1} /></linearGradient><linearGradient id="cheese" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor="#FFD700" stopOpacity={1} /><stop offset="100%" stopColor="#F0C000" stopOpacity={1} /></linearGradient><linearGradient id="beans" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor="#4A2C1A" stopOpacity={1} /><stop offset="100%" stopColor="#3A1C0A" stopOpacity={1} /></linearGradient><filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx={0} dy={2} stdDeviation={3} floodColor="#000000" floodOpacity={0.2} /></filter></defs><path d="M120 180 Q120 120 180 120 L332 120 Q392 120 392 180 L392 332 Q392 392 332 392 L180 392 Q120 392 120 332 Z" fill="url(#burritoBody)" filter="url(#shadow)" /><path d="M140 180 Q140 140 180 140 L332 140 Q372 140 372 180 L372 200 Q372 220 332 220 L180 220 Q140 220 140 180 Z" fill="#B8956A" opacity={0.6} /><path d="M160 160 Q160 145 180 145 L332 145 Q352 145 352 160 L352 175 Q352 185 332 185 L180 185 Q160 185 160 160 Z" fill="url(#burritoFilling)" /><path d="M190 155 Q200 150 210 155 Q220 160 230 155 Q240 150 250 155 Q260 160 270 155 Q280 150 290 155 Q300 160 310 155 Q320 150 330 155" stroke="url(#cheese)" strokeWidth={8} fill="none" strokeLinecap="round" /><circle cx={200} cy={165} r={6} fill="url(#beans)" /><circle cx={240} cy={158} r={5} fill="url(#beans)" /><circle cx={280} cy={162} r={5} fill="url(#beans)" /><circle cx={310} cy={157} r={4} fill="url(#beans)" /><ellipse cx={220} cy={168} rx={3} ry={2} fill="#F5F0E8" /><ellipse cx={260} cy={170} rx={2.5} ry={1.8} fill="#F5F0E8" /><ellipse cx={300} cy={168} rx={2.5} ry={1.8} fill="#F5F0E8" /><path d="M185 170 Q180 165 185 160 Q190 165 185 170" fill="#4CAF50" opacity={0.8} /><path d="M255 175 Q250 170 255 165 Q260 170 255 175" fill="#4CAF50" opacity={0.8} /><path d="M295 172 Q290 167 295 162 Q300 167 295 172" fill="#4CAF50" opacity={0.8} /><circle cx={210} cy={260} r={18} fill="#2D2D2D" /><circle cx={302} cy={260} r={18} fill="#2D2D2D" /><circle cx={215} cy={255} r={6} fill="#FFFFFF" /><circle cx={307} cy={255} r={6} fill="#FFFFFF" /><path d="M210 300 Q256 330 302 300" stroke="#2D2D2D" strokeWidth={4} fill="none" strokeLinecap="round" /><ellipse cx={175} cy={275} rx={15} ry={8} fill="#E8A8A8" opacity={0.5} /><ellipse cx={337} cy={275} rx={15} ry={8} fill="#E8A8A8" opacity={0.5} /><path d="M256 100 Q250 80 256 60" stroke="#FFFFFF" strokeWidth={3} fill="none" opacity={0.6} strokeLinecap="round" /><path d="M230 110 Q225 90 230 70" stroke="#FFFFFF" strokeWidth={2} fill="none" opacity={0.4} strokeLinecap="round" /><path d="M282 110 Q287 90 282 70" stroke="#FFFFFF" strokeWidth={2} fill="none" opacity={0.4} strokeLinecap="round" /></svg></span><span><strong>Your kitchen</strong><small>Private recipe box</small></span></div>
         </div>
       </aside>
 
       <main className="main-content">
         <header className="mobile-header">
-          <a className="brand" href="#" aria-label="Recipetor home"><span className="brand-mark">r<span>.</span></span><span>recipetor</span></a>
+          <a className="brand" href="#" aria-label="Recipetor home">
+            <svg className="brand-icon" viewBox="0 0 512 512" aria-hidden="true">
+              <defs>
+                <linearGradient id="burritoBody" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#D4A574" stopOpacity={1} />
+                  <stop offset="100%" stopColor="#C49564" stopOpacity={1} />
+                </linearGradient>
+                <linearGradient id="burritoFilling" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#E8B87D" stopOpacity={1} />
+                  <stop offset="100%" stopColor="#D8A86D" stopOpacity={1} />
+                </linearGradient>
+                <linearGradient id="cheese" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#FFD700" stopOpacity={1} />
+                  <stop offset="100%" stopColor="#F0C000" stopOpacity={1} />
+                </linearGradient>
+                <linearGradient id="beans" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#4A2C1A" stopOpacity={1} />
+                  <stop offset="100%" stopColor="#3A1C0A" stopOpacity={1} />
+                </linearGradient>
+                <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+                  <feDropShadow dx={0} dy={2} stdDeviation={3} floodColor="#000000" floodOpacity={0.2} />
+                </filter>
+              </defs>
+              <path d="M120 180 Q120 120 180 120 L332 120 Q392 120 392 180 L392 332 Q392 392 332 392 L180 392 Q120 392 120 332 Z" fill="url(#burritoBody)" filter="url(#shadow)" />
+              <path d="M140 180 Q140 140 180 140 L332 140 Q372 140 372 180 L372 200 Q372 220 332 220 L180 220 Q140 220 140 180 Z" fill="#B8956A" opacity={0.6} />
+              <path d="M160 160 Q160 145 180 145 L332 145 Q352 145 352 160 L352 175 Q352 185 332 185 L180 185 Q160 185 160 160 Z" fill="url(#burritoFilling)" />
+              <path d="M190 155 Q200 150 210 155 Q220 160 230 155 Q240 150 250 155 Q260 160 270 155 Q280 150 290 155 Q300 160 310 155 Q320 150 330 155" stroke="url(#cheese)" strokeWidth={8} fill="none" strokeLinecap="round" />
+              <circle cx={200} cy={165} r={6} fill="url(#beans)" />
+              <circle cx={240} cy={158} r={5} fill="url(#beans)" />
+              <circle cx={280} cy={162} r={5} fill="url(#beans)" />
+              <circle cx={310} cy={157} r={4} fill="url(#beans)" />
+              <ellipse cx={220} cy={168} rx={3} ry={2} fill="#F5F0E8" />
+              <ellipse cx={260} cy={170} rx={2.5} ry={1.8} fill="#F5F0E8" />
+              <ellipse cx={300} cy={168} rx={2.5} ry={1.8} fill="#F5F0E8" />
+              <path d="M185 170 Q180 165 185 160 Q190 165 185 170" fill="#4CAF50" opacity={0.8} />
+              <path d="M255 175 Q250 170 255 165 Q260 170 255 175" fill="#4CAF50" opacity={0.8} />
+              <path d="M295 172 Q290 167 295 162 Q300 167 295 172" fill="#4CAF50" opacity={0.8} />
+              <circle cx={210} cy={260} r={18} fill="#2D2D2D" />
+              <circle cx={302} cy={260} r={18} fill="#2D2D2D" />
+              <circle cx={215} cy={255} r={6} fill="#FFFFFF" />
+              <circle cx={307} cy={255} r={6} fill="#FFFFFF" />
+              <path d="M210 300 Q256 330 302 300" stroke="#2D2D2D" strokeWidth={4} fill="none" strokeLinecap="round" />
+              <ellipse cx={175} cy={275} rx={15} ry={8} fill="#E8A8A8" opacity={0.5} />
+              <ellipse cx={337} cy={275} rx={15} ry={8} fill="#E8A8A8" opacity={0.5} />
+              <path d="M256 100 Q250 80 256 60" stroke="#FFFFFF" strokeWidth={3} fill="none" opacity={0.6} strokeLinecap="round" />
+              <path d="M230 110 Q225 90 230 70" stroke="#FFFFFF" strokeWidth={2} fill="none" opacity={0.4} strokeLinecap="round" />
+              <path d="M282 110 Q287 90 282 70" stroke="#FFFFFF" strokeWidth={2} fill="none" opacity={0.4} strokeLinecap="round" />
+            </svg>
+            <span>recipetor</span>
+          </a>
           <button className={`mobile-favorite ${showFavorites ? "active" : ""}`} aria-label="Toggle favorites" onClick={() => setShowFavorites(!showFavorites)}><Icon name="bookmark" /></button>
         </header>
 
