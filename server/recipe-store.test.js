@@ -11,9 +11,15 @@ const recipe = {
   description: "A bright lemon pasta.",
   category: "Dinner",
   prepTimeMinutes: 25,
+  basePortions: 4,
   emoji: "🍽️",
   color: "lemon",
-  ingredients: ["12 oz spaghetti", "2 lemons", "4 tbsp butter", "½ cup parmesan"],
+  ingredients: [
+    { amount: 12, unit: "oz", name: "spaghetti" },
+    { amount: 2, unit: "units", name: "lemons" },
+    { amount: 4, unit: "tbsp", name: "butter" },
+    { amount: 0.5, unit: "cup", name: "parmesan" },
+  ],
   steps: ["Boil the pasta.", "Toss with lemon, butter, and parmesan."],
 };
 
@@ -66,7 +72,14 @@ test("imports via the API, returns saved recipes, and avoids repeated Hermes cal
     hermesAvailable: () => true,
     extractRecipe: async () => {
       extractionCount += 1;
-      return recipe;
+      return {
+        ...recipe,
+        ingredients: recipe.ingredients.map((item) => ({
+          amount: item.amount,
+          unit: item.unit,
+          name: item.name,
+        })),
+      };
     },
   });
 

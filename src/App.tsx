@@ -1,6 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
 import "./App.css";
 
+type IngredientLine = {
+  amount: number | null;
+  unit: string;
+  name: string;
+};
+
 type Recipe = {
   id: string;
   title: string;
@@ -10,12 +16,15 @@ type Recipe = {
   emoji: string;
   color: string;
   description: string;
-  ingredients: string[];
+  ingredients: IngredientLine[];
   steps: string[];
+  basePortions?: number | null;
   isExample?: boolean;
   sourceUrls?: string[];
   sourceCount?: number;
 };
+
+const COMMON_UNITS = ["g", "kg", "ml", "l", "oz", "lb", "cup", "tbsp", "tsp", "piece", "pieces", "can", "clove", "slice", "units"];
 
 const recipes: Recipe[] = [
   {
@@ -27,7 +36,14 @@ const recipes: Recipe[] = [
     emoji: "🍋",
     color: "lemon",
     description: "Silky, bright, and ready before your favorite show starts.",
-    ingredients: ["12 oz spaghetti", "2 lemons, zested and juiced", "4 tbsp butter", "½ cup finely grated parmesan", "Freshly cracked black pepper"],
+    basePortions: 4,
+    ingredients: [
+      { amount: 12, unit: "oz", name: "spaghetti" },
+      { amount: 2, unit: "units", name: "lemons, zested and juiced" },
+      { amount: 4, unit: "tbsp", name: "butter" },
+      { amount: 0.5, unit: "cup", name: "finely grated parmesan" },
+      { amount: null, unit: "", name: "freshly cracked black pepper" },
+    ],
     steps: ["Cook the pasta in well-salted water until just shy of al dente. Save a mug of pasta water.", "Melt butter in a wide pan. Add lemon zest and a splash of pasta water.", "Toss in the pasta, lemon juice, and parmesan until glossy. Add more pasta water as needed.", "Finish with plenty of black pepper and extra parmesan."],
   },
   {
@@ -39,7 +55,15 @@ const recipes: Recipe[] = [
     emoji: "🥑",
     color: "avocado",
     description: "Crunchy spiced chickpeas, creamy avocado, and a zippy tahini drizzle.",
-    ingredients: ["1 can chickpeas, drained and dried", "1 ripe avocado", "2 cups cooked rice", "1 tsp smoked paprika", "2 tbsp tahini", "1 tbsp lemon juice"],
+    basePortions: 2,
+    ingredients: [
+      { amount: 1, unit: "can", name: "chickpeas, drained and dried" },
+      { amount: 1, unit: "units", name: "ripe avocado" },
+      { amount: 2, unit: "cup", name: "cooked rice" },
+      { amount: 1, unit: "tsp", name: "smoked paprika" },
+      { amount: 2, unit: "tbsp", name: "tahini" },
+      { amount: 1, unit: "tbsp", name: "lemon juice" },
+    ],
     steps: ["Toss dry chickpeas with olive oil, paprika, salt, and pepper.", "Roast at 425°F for 25–30 minutes, shaking the pan once.", "Whisk tahini, lemon juice, and a little warm water until pourable.", "Serve chickpeas over rice with avocado and tahini sauce."],
   },
   {
@@ -51,7 +75,15 @@ const recipes: Recipe[] = [
     emoji: "🫐",
     color: "berry",
     description: "Fluffy, golden pancakes with juicy berries in every bite.",
-    ingredients: ["1½ cups all-purpose flour", "1 tbsp baking powder", "1¼ cups milk", "1 egg", "2 tbsp melted butter", "1 cup fresh blueberries"],
+    basePortions: 4,
+    ingredients: [
+      { amount: 1.5, unit: "cup", name: "all-purpose flour" },
+      { amount: 1, unit: "tbsp", name: "baking powder" },
+      { amount: 1.25, unit: "cup", name: "milk" },
+      { amount: 1, unit: "units", name: "egg" },
+      { amount: 2, unit: "tbsp", name: "melted butter" },
+      { amount: 1, unit: "cup", name: "fresh blueberries" },
+    ],
     steps: ["Whisk flour and baking powder in a large bowl.", "In another bowl, whisk milk, egg, and melted butter. Fold into the dry ingredients.", "Gently fold in blueberries. Leave a few lumps in the batter.", "Cook small scoops on a buttered skillet until bubbles form, then flip and cook until golden."],
   },
 ];
@@ -93,6 +125,7 @@ function App() {
   const [savedRecipes, setSavedRecipes] = useState<Recipe[]>([]);
   const [serverState, setServerState] = useState<"checking" | "ready" | "hermes-missing" | "offline">("checking");
   const [isImporting, setIsImporting] = useState(false);
+  const [portions, setPortions] = useState<number | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -173,6 +206,7 @@ function App() {
         ...current.filter((recipe) => recipe.id !== importedRecipe.id),
       ]);
       setSelectedRecipe(importedRecipe);
+      setPortions(importedRecipe.basePortions ?? null);
       setInstagramLink("");
       setNotice(
         result.reason === "source"
@@ -345,7 +379,31 @@ function App() {
             {selectedRecipe.sourceUrls && <div className="source-links"><strong>Instagram links</strong>{selectedRecipe.sourceUrls.map((sourceUrl, index) => <a key={sourceUrl} href={sourceUrl} target="_blank" rel="noreferrer">Source {index + 1} <Icon name="arrow" size={13} /></a>)}</div>}
             <div className="modal-actions"><button className="primary-button" onClick={() => toggleFavorite(selectedRecipe.id)}><Icon name="bookmark" /> {favorites.includes(selectedRecipe.id) ? "Saved to favorites" : "Save recipe"}</button><button className="secondary-button" onClick={() => void shareRecipe(selectedRecipe)}><Icon name="share" /> Share</button></div>
             <div className="modal-recipe-columns">
-              <div><h3>Ingredients <span>({selectedRecipe.ingredients.length})</span></h3><ul>{selectedRecipe.ingredients.map((ingredient) => <li key={ingredient}>{ingredient}</li>)}</ul></div>
+              <div>
+                <div className="ingredients-header">
+                  <h3>Ingredients <span>({selectedRecipe.ingredients.length})</span></h3>
+                  {selectedRecipe.basePortions && <div className="portions-control">
+                    <label>Portions</label>
+                    <input type="number" min="1" value={portions ?? selectedRecipe.basePortions} onChange={(event) => setPortions(Math.max(1, parseInt(event.target.value, 10) || 1))} />
+                  </div>}
+                </div>
+                <ul>
+                  {selectedRecipe.ingredients.map((ingredient, index) => {
+                    const scale = selectedRecipe.basePortions && portions ? portions / selectedRecipe.basePortions : 1;
+                    const scaledAmount = ingredient.amount !== null ? ingredient.amount * scale : null;
+                    return (
+                      <li key={index} className="ingredient-line">
+                        <span className="ingredient-amount">{scaledAmount !== null ? scaledAmount.toString().replace(/\.0$/, "") : ""}</span>
+                        <select className="ingredient-unit" value={ingredient.unit} onChange={() => { /* unit selection stored per line */ }}>
+                          <option value="">—</option>
+                          {COMMON_UNITS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
+                        </select>
+                        <span className="ingredient-name">{ingredient.name}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
               <div><h3>Let’s make it</h3><ol>{selectedRecipe.steps.map((step) => <li key={step}>{step}</li>)}</ol></div>
             </div>
           </div>

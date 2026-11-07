@@ -149,6 +149,17 @@ h1 { margin-bottom: 7px; font-family: Georgia, "Times New Roman", serif; font-si
 .modal-recipe-columns ul, .modal-recipe-columns ol { display: grid; gap: 9px; margin: 0; padding-left: 17px; color: #70685e; font-size: 10px; line-height: 1.5; }
 .modal-recipe-columns li::marker { color: #c97757; }
 
+.ingredients-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.portions-control { display: flex; align-items: center; gap: 8px; }
+.portions-control label { color: #827a70; font-size: 10px; font-weight: 600; }
+.portions-control input { width: 56px; height: 30px; border: 1px solid #ece7df; border-radius: 7px; background: #fff; color: #403a34; font-size: 11px; text-align: center; }
+
+.ingredient-line { display: flex; align-items: center; gap: 8px; font-size: 10px; color: #70685e; line-height: 1.4; }
+.ingredient-amount { min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; color: #403a34; font-weight: 600; }
+.ingredient-unit { min-width: 56px; height: 26px; border: 1px solid #ece7df; border-radius: 6px; background: #fff; color: #403a34; font-size: 10px; cursor: pointer; }
+.ingredient-unit:focus { outline: 2px solid #e8a189; outline-offset: 1px; }
+.ingredient-name { flex: 1; }
+
 @media (min-width: 1500px) {
   .content-wrap { padding-right: 76px; padding-left: 76px; }
   .recipe-art { height: 178px; }

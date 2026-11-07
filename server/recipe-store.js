@@ -27,7 +27,8 @@ function normalizeText(value) {
 }
 
 function normalizeIngredient(value) {
-  const words = normalizeText(value.replace(/[¼½¾⅓⅔⅛⅜⅝⅞]/g, " "))
+  const text = typeof value === "string" ? value : value.name;
+  const words = normalizeText(text.replace(/[¼½¾⅓⅔⅛⅜⅝⅞]/g, " "))
     .replace(/^\d+(?:\s+\d+\/\d+|[/.]\d+)?\s*/, "")
     .split(" ")
     .filter((word) => word && !UNITS.has(word) && !PREPARATION_WORDS.has(word));
@@ -57,6 +58,7 @@ function toRecipe(row, sourceRows) {
     description: row.description,
     category: row.category,
     prepTimeMinutes: row.prep_time_minutes,
+    basePortions: row.base_portions,
     time: row.prep_time_minutes ? `${row.prep_time_minutes} min` : "Time varies",
     emoji: row.emoji,
     color: row.color,
@@ -84,6 +86,7 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
       description TEXT NOT NULL,
       category TEXT NOT NULL,
       prep_time_minutes INTEGER,
+      base_portions INTEGER,
       emoji TEXT NOT NULL,
       color TEXT NOT NULL,
       ingredients_json TEXT NOT NULL,
@@ -159,9 +162,9 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
       const id = randomUUID();
       db.prepare(`
         INSERT INTO recipes (
-          id, title, title_key, description, category, prep_time_minutes, emoji, color,
+          id, title, title_key, description, category, prep_time_minutes, base_portions, emoji, color,
           ingredients_json, steps_json, fingerprint, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id,
         recipe.title,
@@ -169,6 +172,7 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
         recipe.description,
         recipe.category,
         recipe.prepTimeMinutes,
+        recipe.basePortions ?? null,
         recipe.emoji,
         recipe.color,
         JSON.stringify(recipe.ingredients),
