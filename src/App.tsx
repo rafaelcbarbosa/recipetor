@@ -26,6 +26,31 @@ type Recipe = {
 
 const COMMON_UNITS = ["g", "kg", "ml", "l", "oz", "lb", "cup", "tbsp", "tsp", "piece", "pieces", "can", "clove", "slice", "units"];
 
+const UNIT_CONVERSIONS: Record<string, Record<string, number>> = {
+  g: { kg: 0.001, oz: 0.035274, lb: 0.00220462 },
+  kg: { g: 1000, oz: 35.274, lb: 2.20462 },
+  ml: { l: 0.001, cup: 0.00422675, tbsp: 0.067628, tsp: 0.202884, oz: 0.033814 },
+  l: { ml: 1000, cup: 4.22675, tbsp: 67.628, tsp: 202.884, oz: 33.814 },
+  oz: { g: 28.3495, kg: 0.0283495, lb: 0.0625, ml: 29.5735, l: 0.0295735, cup: 0.125, tbsp: 2, tsp: 6 },
+  lb: { g: 453.592, kg: 0.453592, oz: 16 },
+  cup: { ml: 236.588, l: 0.236588, tbsp: 16, tsp: 48, oz: 8 },
+  tbsp: { ml: 14.7868, l: 0.0147868, cup: 0.0625, tsp: 3, oz: 0.5 },
+  tsp: { ml: 4.92892, l: 0.00492892, cup: 0.0208333, tbsp: 0.333333, oz: 0.166667 },
+  piece: { pieces: 1 },
+  pieces: { piece: 1 },
+  can: {},
+  clove: {},
+  slice: {},
+  units: {},
+};
+
+function convertAmount(amount: number, fromUnit: string, toUnit: string): number | null {
+  if (fromUnit === toUnit) return amount;
+  if (!fromUnit || !toUnit) return null;
+  const conversion = UNIT_CONVERSIONS[fromUnit]?.[toUnit];
+  return conversion ? amount * conversion : null;
+}
+
 const recipes: Recipe[] = [
   {
     id: "lemon-pasta",
@@ -127,6 +152,7 @@ function App() {
   const [isImporting, setIsImporting] = useState(false);
   const [portions, setPortions] = useState<number | null>(null);
   const [commitInfo, setCommitInfo] = useState<{ hash: string; date: string; message: string } | null>(null);
+  const [ingredientUnits, setIngredientUnits] = useState<Record<number, string>>({});
 
   useEffect(() => {
     fetch("/commit-info.json")
@@ -214,6 +240,7 @@ function App() {
         ...current.filter((recipe) => recipe.id !== importedRecipe.id),
       ]);
       setSelectedRecipe(importedRecipe);
+      setIngredientUnits({});
       setPortions(importedRecipe.basePortions ?? null);
       setInstagramLink("");
       setNotice(
@@ -356,7 +383,7 @@ function App() {
 
             {visibleRecipes.length > 0 ? <div className="recipe-grid">
               {visibleRecipes.map((recipe, index) => (
-                <article className="recipe-card" key={recipe.id} onClick={() => setSelectedRecipe(recipe)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") setSelectedRecipe(recipe); }} tabIndex={0}>
+                <article className="recipe-card" key={recipe.id} onClick={() => { setIngredientUnits({}); setSelectedRecipe(recipe); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { setIngredientUnits({}); setSelectedRecipe(recipe); } }} tabIndex={0}>
                   <div className={`recipe-art ${recipe.color}`}>
                     <span className="art-orbit orbit-one" /><span className="art-orbit orbit-two" />
                     <span className="food-emoji" aria-hidden="true">{recipe.emoji}</span>
@@ -401,7 +428,7 @@ function App() {
 
       {selectedRecipe && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedRecipe(null); }}>
         <section className="recipe-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-          <button className="modal-close" aria-label="Close recipe" onClick={() => setSelectedRecipe(null)}><Icon name="close" /></button>
+          <button className="modal-close" aria-label="Close recipe" onClick={() => { setSelectedRecipe(null); setIngredientUnits({}); }}><Icon name="close" /></button>
           <div className={`modal-art ${selectedRecipe.color}`}><span aria-hidden="true">{selectedRecipe.emoji}</span></div>
           <div className="modal-content">
             <div className="card-meta"><span>{selectedRecipe.category}</span><span className="meta-dot" /><span><Icon name="clock" size={14} /> {selectedRecipe.time}</span></div>
@@ -422,11 +449,15 @@ function App() {
                 <ul>
                   {selectedRecipe.ingredients.map((ingredient, index) => {
                     const scale = selectedRecipe.basePortions && portions ? portions / selectedRecipe.basePortions : 1;
-                    const scaledAmount = ingredient.amount !== null ? ingredient.amount * scale : null;
+                    const baseAmount = ingredient.amount !== null ? ingredient.amount * scale : null;
+                    const currentUnit = ingredientUnits[index] ?? ingredient.unit;
+                    const displayAmount = baseAmount !== null && currentUnit !== ingredient.unit
+                      ? convertAmount(baseAmount, ingredient.unit, currentUnit)
+                      : baseAmount;
                     return (
                       <li key={index} className="ingredient-line">
-                        <span className="ingredient-amount">{scaledAmount !== null ? scaledAmount.toString().replace(/\.0$/, "") : ""}</span>
-                        <select className="ingredient-unit" value={ingredient.unit} onChange={() => { /* unit selection stored per line */ }}>
+                        <span className="ingredient-amount">{displayAmount !== null ? displayAmount.toString().replace(/\.0$/, "") : ""}</span>
+                        <select className="ingredient-unit" value={currentUnit} onChange={(event) => setIngredientUnits((prev) => ({ ...prev, [index]: event.target.value }))}>
                           <option value="">—</option>
                           {COMMON_UNITS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
                         </select>
