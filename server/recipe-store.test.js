@@ -15,12 +15,13 @@ const recipe = {
   emoji: "🍽️",
   color: "lemon",
   ingredients: [
-    { amount: 12, unit: "oz", name: "spaghetti" },
-    { amount: 2, unit: "units", name: "lemons" },
-    { amount: 4, unit: "tbsp", name: "butter" },
-    { amount: 0.5, unit: "cup", name: "parmesan" },
+    { amount: 12, unit: "oz", name: "spaghetti", nutrition: { calories: 220, protein: 8, carbs: 43, fat: 1 } },
+    { amount: 2, unit: "units", name: "lemons", nutrition: { calories: 34, protein: 1, carbs: 11, fat: 0 } },
+    { amount: 4, unit: "tbsp", name: "butter", nutrition: { calories: 407, protein: 0, carbs: 0, fat: 46 } },
+    { amount: 0.5, unit: "cup", name: "parmesan", nutrition: { calories: 216, protein: 19, carbs: 2, fat: 14 } },
   ],
   steps: ["Boil the pasta.", "Toss with lemon, butter, and parmesan."],
+  totals: { calories: 219, protein: 7, carbs: 14, fat: 15 },
 };
 
 function createTestStore() {
@@ -78,7 +79,9 @@ test("imports via the API, returns saved recipes, and avoids repeated Hermes cal
           amount: item.amount,
           unit: item.unit,
           name: item.name,
+          nutrition: item.nutrition,
         })),
+        totals: recipe.totals,
       };
     },
   });

@@ -148,6 +148,17 @@ h1 { margin-bottom: 7px; font-family: Georgia, "Times New Roman", serif; font-si
 .source-links a { display: inline-flex; align-items: center; gap: 3px; color: #bc5737; text-decoration: none; }
 .source-links a:hover { text-decoration: underline; }
 .inline-tag { position: static; display: inline-block; padding: 3px 5px; font-size: 7px; }
+
+.nutrition-summary { margin: 14px 0; padding: 14px 16px; background: #fdfaf6; border: 1px solid #eee9e1; border-radius: 12px; }
+.nutrition-summary h3 { margin: 0 0 10px; font-size: 11px; font-weight: 700; color: #625a4f; }
+.nutrition-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; text-align: center; }
+.nutrition-item { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.nutrition-value { font-size: 18px; font-weight: 700; color: #403a34; line-height: 1; }
+.nutrition-label { font-size: 9px; color: #91897e; text-transform: uppercase; letter-spacing: .5px; }
+
+.ingredient-nutrition { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; min-width: 60px; font-size: 9px; color: #827a70; text-align: right; }
+.ingredient-macros { font-size: 8px; color: #a39b90; }
+
 .modal-actions { display: flex; gap: 8px; margin: 17px 0 23px; flex-wrap: wrap; }
 .delete-button { background: #fdf3f1; color: #c4664a; border: 1px solid #f3d9d2; }
 .delete-button:hover { background: #fbeae6; color: #b04a32; }

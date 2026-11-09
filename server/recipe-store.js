@@ -64,6 +64,7 @@ function toRecipe(row, sourceRows) {
     color: row.color,
     ingredients: JSON.parse(row.ingredients_json),
     steps: JSON.parse(row.steps_json),
+    totals: row.totals_json ? JSON.parse(row.totals_json) : null,
     source: sourceUrls.length > 1 ? `${sourceUrls.length} Instagram sources` : "Instagram",
     sourceUrls,
     sourceCount: sourceUrls.length,
@@ -91,6 +92,7 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
       color TEXT NOT NULL,
       ingredients_json TEXT NOT NULL,
       steps_json TEXT NOT NULL,
+      totals_json TEXT,
       fingerprint TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -179,8 +181,8 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
       db.prepare(`
         INSERT INTO recipes (
           id, title, title_key, description, category, prep_time_minutes, base_portions, emoji, color,
-          ingredients_json, steps_json, fingerprint, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ingredients_json, steps_json, totals_json, fingerprint, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id,
         recipe.title,
@@ -193,6 +195,7 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
         recipe.color,
         JSON.stringify(recipe.ingredients),
         JSON.stringify(recipe.steps),
+        recipe.totals ? JSON.stringify(recipe.totals) : null,
         recipeFingerprint,
         now,
         now,

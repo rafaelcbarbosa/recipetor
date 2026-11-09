@@ -1,10 +1,18 @@
 import { useEffect, useState, type FormEvent } from "react";
 import "./App.css";
 
+type Nutrition = {
+  calories: number | null;
+  protein: number | null;
+  carbs: number | null;
+  fat: number | null;
+};
+
 type IngredientLine = {
   amount: number | null;
   unit: string;
   name: string;
+  nutrition?: Nutrition;
 };
 
 type Recipe = {
@@ -19,6 +27,7 @@ type Recipe = {
   ingredients: IngredientLine[];
   steps: string[];
   basePortions?: number | null;
+  totals?: Nutrition | null;
   isExample?: boolean;
   sourceUrls?: string[];
   sourceCount?: number;
@@ -63,13 +72,14 @@ const recipes: Recipe[] = [
     description: "Silky, bright, and ready before your favorite show starts.",
     basePortions: 4,
     ingredients: [
-      { amount: 12, unit: "oz", name: "spaghetti" },
-      { amount: 2, unit: "units", name: "lemons, zested and juiced" },
-      { amount: 4, unit: "tbsp", name: "butter" },
-      { amount: 0.5, unit: "cup", name: "finely grated parmesan" },
-      { amount: null, unit: "", name: "freshly cracked black pepper" },
+      { amount: 12, unit: "oz", name: "spaghetti", nutrition: { calories: 220, protein: 8, carbs: 43, fat: 1 } },
+      { amount: 2, unit: "units", name: "lemons, zested and juiced", nutrition: { calories: 34, protein: 1, carbs: 11, fat: 0 } },
+      { amount: 4, unit: "tbsp", name: "butter", nutrition: { calories: 407, protein: 0, carbs: 0, fat: 46 } },
+      { amount: 0.5, unit: "cup", name: "finely grated parmesan", nutrition: { calories: 216, protein: 19, carbs: 2, fat: 14 } },
+      { amount: null, unit: "", name: "freshly cracked black pepper", nutrition: { calories: null, protein: null, carbs: null, fat: null } },
     ],
     steps: ["Cook the pasta in well-salted water until just shy of al dente. Save a mug of pasta water.", "Melt butter in a wide pan. Add lemon zest and a splash of pasta water.", "Toss in the pasta, lemon juice, and parmesan until glossy. Add more pasta water as needed.", "Finish with plenty of black pepper and extra parmesan."],
+    totals: { calories: 219, protein: 7, carbs: 14, fat: 15 },
   },
   {
     id: "crispy-chickpeas",
@@ -82,14 +92,15 @@ const recipes: Recipe[] = [
     description: "Crunchy spiced chickpeas, creamy avocado, and a zippy tahini drizzle.",
     basePortions: 2,
     ingredients: [
-      { amount: 1, unit: "can", name: "chickpeas, drained and dried" },
-      { amount: 1, unit: "units", name: "ripe avocado" },
-      { amount: 2, unit: "cup", name: "cooked rice" },
-      { amount: 1, unit: "tsp", name: "smoked paprika" },
-      { amount: 2, unit: "tbsp", name: "tahini" },
-      { amount: 1, unit: "tbsp", name: "lemon juice" },
+      { amount: 1, unit: "can", name: "chickpeas, drained and dried", nutrition: { calories: 210, protein: 11, carbs: 35, fat: 4 } },
+      { amount: 1, unit: "units", name: "ripe avocado", nutrition: { calories: 234, protein: 3, carbs: 12, fat: 21 } },
+      { amount: 2, unit: "cup", name: "cooked rice", nutrition: { calories: 416, protein: 8, carbs: 90, fat: 1 } },
+      { amount: 1, unit: "tsp", name: "smoked paprika", nutrition: { calories: 6, protein: 0, carbs: 1, fat: 0 } },
+      { amount: 2, unit: "tbsp", name: "tahini", nutrition: { calories: 178, protein: 5, carbs: 6, fat: 16 } },
+      { amount: 1, unit: "tbsp", name: "lemon juice", nutrition: { calories: 4, protein: 0, carbs: 1, fat: 0 } },
     ],
     steps: ["Toss dry chickpeas with olive oil, paprika, salt, and pepper.", "Roast at 425°F for 25–30 minutes, shaking the pan once.", "Whisk tahini, lemon juice, and a little warm water until pourable.", "Serve chickpeas over rice with avocado and tahini sauce."],
+    totals: { calories: 524, protein: 13, carbs: 72, fat: 21 },
   },
   {
     id: "berry-pancakes",
@@ -102,14 +113,15 @@ const recipes: Recipe[] = [
     description: "Fluffy, golden pancakes with juicy berries in every bite.",
     basePortions: 4,
     ingredients: [
-      { amount: 1.5, unit: "cup", name: "all-purpose flour" },
-      { amount: 1, unit: "tbsp", name: "baking powder" },
-      { amount: 1.25, unit: "cup", name: "milk" },
-      { amount: 1, unit: "units", name: "egg" },
-      { amount: 2, unit: "tbsp", name: "melted butter" },
-      { amount: 1, unit: "cup", name: "fresh blueberries" },
+      { amount: 1.5, unit: "cup", name: "all-purpose flour", nutrition: { calories: 682, protein: 19, carbs: 143, fat: 2 } },
+      { amount: 1, unit: "tbsp", name: "baking powder", nutrition: { calories: 2, protein: 0, carbs: 1, fat: 0 } },
+      { amount: 1.25, unit: "cup", name: "milk", nutrition: { calories: 156, protein: 8, carbs: 12, fat: 8 } },
+      { amount: 1, unit: "units", name: "egg", nutrition: { calories: 72, protein: 6, carbs: 0, fat: 5 } },
+      { amount: 2, unit: "tbsp", name: "melted butter", nutrition: { calories: 204, protein: 0, carbs: 0, fat: 23 } },
+      { amount: 1, unit: "cup", name: "fresh blueberries", nutrition: { calories: 84, protein: 1, carbs: 21, fat: 0 } },
     ],
     steps: ["Whisk flour and baking powder in a large bowl.", "In another bowl, whisk milk, egg, and melted butter. Fold into the dry ingredients.", "Gently fold in blueberries. Leave a few lumps in the batter.", "Cook small scoops on a buttered skillet until bubbles form, then flip and cook until golden."],
+    totals: { calories: 300, protein: 8, carbs: 44, fat: 12 },
   },
 ];
 
@@ -531,6 +543,15 @@ function App() {
             <p className="modal-description">{selectedRecipe.description}</p>
             <p className="modal-source">{selectedRecipe.isExample === false ? "Saved from" : "Example source"} <strong>{selectedRecipe.source}</strong> {selectedRecipe.isExample !== false && <span className="example-tag inline-tag">EXAMPLE</span>}</p>
             {selectedRecipe.sourceUrls && <div className="source-links"><strong>Instagram links</strong>{selectedRecipe.sourceUrls.map((sourceUrl, index) => <a key={sourceUrl} href={sourceUrl} target="_blank" rel="noreferrer">Source {index + 1} <Icon name="arrow" size={13} /></a>)}</div>}
+            {selectedRecipe.totals && <div className="nutrition-summary">
+              <h3>Nutrition per portion</h3>
+              <div className="nutrition-grid">
+                <div className="nutrition-item"><span className="nutrition-value">{selectedRecipe.totals.calories}</span><span className="nutrition-label">kcal</span></div>
+                <div className="nutrition-item"><span className="nutrition-value">{selectedRecipe.totals.protein}g</span><span className="nutrition-label">Protein</span></div>
+                <div className="nutrition-item"><span className="nutrition-value">{selectedRecipe.totals.carbs}g</span><span className="nutrition-label">Carbs</span></div>
+                <div className="nutrition-item"><span className="nutrition-value">{selectedRecipe.totals.fat}g</span><span className="nutrition-label">Fat</span></div>
+              </div>
+            </div>}
             <div className="modal-actions"><button className="primary-button" onClick={() => toggleFavorite(selectedRecipe.id)}><Icon name="bookmark" /> {favorites.includes(selectedRecipe.id) ? "Saved to favorites" : "Save recipe"}</button><button className="secondary-button" onClick={() => void shareRecipe(selectedRecipe)}><Icon name="share" /> Share</button><button className="secondary-button delete-button" onClick={() => void deleteRecipe(selectedRecipe.id)}><Icon name="close" /> Delete</button></div>
             <div className="modal-recipe-columns">
               <div>
@@ -549,6 +570,16 @@ function App() {
                     const displayAmount = baseAmount !== null && currentUnit !== ingredient.unit
                       ? convertAmount(baseAmount, ingredient.unit, currentUnit)
                       : baseAmount;
+                    const nutrition = ingredient.nutrition;
+                    const macros = nutrition && nutrition.protein !== null && nutrition.carbs !== null && nutrition.fat !== null
+                      ? { protein: nutrition.protein, carbs: nutrition.carbs, fat: nutrition.fat }
+                      : null;
+                    const macroTotal = macros ? macros.protein + macros.carbs + macros.fat : 0;
+                    const macroPercents = macros && macroTotal > 0 ? {
+                      protein: Math.round((macros.protein / macroTotal) * 100),
+                      carbs: Math.round((macros.carbs / macroTotal) * 100),
+                      fat: Math.round((macros.fat / macroTotal) * 100),
+                    } : null;
                     return (
                       <li key={index} className="ingredient-line">
                         <span className="ingredient-amount">{displayAmount !== null ? displayAmount.toString().replace(/\.0$/, "") : ""}</span>
@@ -557,6 +588,16 @@ function App() {
                           {COMMON_UNITS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
                         </select>
                         <span className="ingredient-name">{ingredient.name}</span>
+                        {nutrition && nutrition.calories !== null && (
+                          <span className="ingredient-nutrition">
+                            {nutrition.calories} kcal
+                            {macroPercents && (
+                              <span className="ingredient-macros">
+                                P: {macroPercents.protein}% C: {macroPercents.carbs}% F: {macroPercents.fat}%
+                              </span>
+                            )}
+                          </span>
+                        )}
                       </li>
                     );
                   })}
