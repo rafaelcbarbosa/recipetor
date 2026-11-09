@@ -119,3 +119,33 @@ test("imports via the API, returns saved recipes, and avoids repeated Hermes cal
     cleanup();
   }
 });
+
+test("returns the extraction failure reason from the import API", async () => {
+  const { store, cleanup } = createTestStore();
+  const server = createServer({
+    store,
+    hermesAvailable: () => true,
+    extractRecipe: async () => {
+      throw new Error("Hermes request timed out.");
+    },
+  });
+
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const response = await fetch(`${baseUrl}/api/recipes/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: baseUrl },
+      body: JSON.stringify({ url: "https://instagram.com/p/timeout" }),
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 502);
+    assert.match(body.error, /Hermes request timed out/);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    cleanup();
+  }
+});

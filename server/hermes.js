@@ -165,6 +165,7 @@ export function createHermesExtractor({
         },
       );
       let stdout = "";
+      let stderr = "";
       let stdoutBytes = 0;
       let timedOut = false;
       let overflow = false;
@@ -206,7 +207,10 @@ export function createHermesExtractor({
           stdout += chunk;
         }
       });
-      child.stderr.resume();
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (chunk) => {
+        if (stderr.length < 2000) stderr += chunk.slice(0, 2000 - stderr.length);
+      });
 
       child.once("error", (error) => {
         clearTimers();
@@ -216,7 +220,10 @@ export function createHermesExtractor({
         clearTimers();
         if (timedOut) return reject(new Error("Hermes request timed out."));
         if (overflow) return reject(new Error("Hermes response exceeded the size limit."));
-        if (code !== 0) return reject(new Error(`Hermes exited with status ${code}.`));
+        if (code !== 0) {
+          const detail = stderr.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ").trim();
+          return reject(new Error(`Hermes exited with status ${code}.${detail ? ` ${detail}` : ""}`));
+        }
         resolve(stdout);
       });
     });

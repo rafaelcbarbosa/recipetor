@@ -180,18 +180,21 @@ export function createServer({
       }
 
       const extraction = (async () => {
+        let extracted;
         try {
-          const extracted = await extractRecipe(url);
-          const saved = store.saveImported(url, extracted);
-          return {
-            recipe: saved.recipe,
-            duplicate: saved.duplicate,
-            reason: saved.reason,
-          };
+          extracted = await extractRecipe(url);
         } catch (error) {
           console.error("Recipe import failed:", error instanceof Error ? error.message : "Unknown error");
-          throw new HttpError(502, "Hermes could not extract a recipe. Check that the post is public and Hermes is configured.");
+          const reason = error instanceof Error && error.message ? error.message : "Unknown extraction error.";
+          throw new HttpError(502, `Hermes could not extract a recipe: ${reason}`);
         }
+
+        const saved = store.saveImported(url, extracted);
+        return {
+          recipe: saved.recipe,
+          duplicate: saved.duplicate,
+          reason: saved.reason,
+        };
       })();
       inFlight.set(url, extraction);
       try {
