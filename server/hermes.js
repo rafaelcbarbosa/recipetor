@@ -110,10 +110,10 @@ export function validateRecipeResult(value) {
   });
 
   const totals = value.totals ? {
-    calories: validateNutrition(value.totals.calories, "total calories", { allowNull: false }),
-    protein: validateNutrition(value.totals.protein, "total protein", { allowNull: false }),
-    carbs: validateNutrition(value.totals.carbs, "total carbs", { allowNull: false }),
-    fat: validateNutrition(value.totals.fat, "total fat", { allowNull: false }),
+    calories: validateNutrition(value.totals.calories, "total calories", { allowNull: true }),
+    protein: validateNutrition(value.totals.protein, "total protein", { allowNull: true }),
+    carbs: validateNutrition(value.totals.carbs, "total carbs", { allowNull: true }),
+    fat: validateNutrition(value.totals.fat, "total fat", { allowNull: true }),
   } : null;
 
   const steps = value.instructions.map((item) => boundedString(item, "instruction", 1500));

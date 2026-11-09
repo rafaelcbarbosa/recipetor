@@ -230,13 +230,24 @@ function App() {
     }
 
     setIsImporting(true);
-    setNotice("Checking the link and extracting the recipe…");
+    setNotice("Checking the link…");
     try {
       const response = await fetch("/api/recipes/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: url.href }),
       });
+      if (!response.ok) {
+        let message = "Recipe import failed. Try again.";
+        try {
+          const errorData = await response.json();
+          message = errorData.error || message;
+        } catch {
+          // response wasn't JSON
+        }
+        throw new Error(message);
+      }
+      setNotice("Extracting recipe with Hermes…");
       const result = await response.json() as {
         recipe?: Recipe;
         duplicate?: boolean;

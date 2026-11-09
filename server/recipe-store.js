@@ -145,6 +145,26 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     }
   }
 
+  function computeTotalsFromIngredients(ingredients, basePortions) {
+    const totals = { calories: 0, protein: 0, carbs: 0, fat: 0 };
+    let hasAny = false;
+    for (const ing of ingredients) {
+      if (ing.nutrition) {
+        if (ing.nutrition.calories != null) { totals.calories += ing.nutrition.calories; hasAny = true; }
+        if (ing.nutrition.protein != null) { totals.protein += ing.nutrition.protein; hasAny = true; }
+        if (ing.nutrition.carbs != null) { totals.carbs += ing.nutrition.carbs; hasAny = true; }
+        if (ing.nutrition.fat != null) { totals.fat += ing.nutrition.fat; hasAny = true; }
+      }
+    }
+    if (!hasAny) return null;
+    const portions = basePortions ?? 1;
+    totals.calories = Math.round(totals.calories / portions);
+    totals.protein = Math.round(totals.protein / portions);
+    totals.carbs = Math.round(totals.carbs / portions);
+    totals.fat = Math.round(totals.fat / portions);
+    return totals;
+  }
+
   function saveImported(url, recipe) {
     const titleKey = normalizeText(recipe.title);
     const recipeFingerprint = fingerprint(titleKey, recipe.ingredients);
@@ -178,6 +198,7 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
       }
 
       const id = randomUUID();
+      const computedTotals = recipe.totals ? recipe.totals : computeTotalsFromIngredients(recipe.ingredients, recipe.basePortions);
       db.prepare(`
         INSERT INTO recipes (
           id, title, title_key, description, category, prep_time_minutes, base_portions, emoji, color,
@@ -195,7 +216,7 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
         recipe.color,
         JSON.stringify(recipe.ingredients),
         JSON.stringify(recipe.steps),
-        recipe.totals ? JSON.stringify(recipe.totals) : null,
+        computedTotals ? JSON.stringify(computedTotals) : null,
         recipeFingerprint,
         now,
         now,
