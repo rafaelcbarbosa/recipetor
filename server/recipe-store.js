@@ -106,6 +106,18 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     CREATE INDEX IF NOT EXISTS recipe_sources_recipe_id_idx ON recipe_sources(recipe_id);
   `);
 
+  // Migration: add totals_json column if missing (for existing databases)
+  try {
+    const columns = db.prepare("PRAGMA table_info(recipes)").all();
+    const hasTotalsJson = columns.some(c => c.name === "totals_json");
+    if (!hasTotalsJson) {
+      db.exec("ALTER TABLE recipes ADD COLUMN totals_json TEXT;");
+      console.log("Migration: added totals_json column to recipes table");
+    }
+  } catch (error) {
+    console.error("Migration check failed:", error instanceof Error ? error.message : "Unknown error");
+  }
+
   const recipeById = db.prepare("SELECT * FROM recipes WHERE id = ?");
   const sourcesByRecipe = db.prepare(
     "SELECT url FROM recipe_sources WHERE recipe_id = ? ORDER BY created_at ASC",

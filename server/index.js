@@ -157,6 +157,7 @@ export function createServer({
       checkSameOrigin(request);
       const body = await readJson(request);
       const url = canonicalizeInstagramUrl(body?.url);
+      console.log(`[import] URL: ${url}`);
       const existing = store.getBySource(url);
       if (existing) return jsonResponse(response, 200, { recipe: existing, duplicate: true, reason: "source" });
 
@@ -182,7 +183,9 @@ export function createServer({
       const extraction = (async () => {
         let extracted;
         try {
+          console.log(`[import] Calling Hermes for: ${url}`);
           extracted = await extractRecipe(url);
+          console.log(`[import] Hermes returned, saving recipe`);
         } catch (error) {
           console.error("Recipe import failed:", error instanceof Error ? error.message : "Unknown error");
           const reason = error instanceof Error && error.message ? error.message : "Unknown extraction error.";
@@ -190,6 +193,7 @@ export function createServer({
         }
 
         const saved = store.saveImported(url, extracted);
+        console.log(`[import] Recipe saved: ${saved.recipe.id}, duplicate: ${saved.duplicate}`);
         return {
           recipe: saved.recipe,
           duplicate: saved.duplicate,
