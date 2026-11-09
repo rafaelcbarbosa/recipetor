@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -50,6 +50,18 @@ function fingerprint(titleKey, ingredients) {
   return createHash("sha256").update(`${titleKey}\n${names.join("\n")}`).digest("hex");
 }
 
+function hashPassword(password, salt) {
+  return createHash("sha256").update(salt + password).digest("hex");
+}
+
+function generateSalt() {
+  return randomBytes(16).toString("hex");
+}
+
+function verifyPassword(password, salt, hash) {
+  return hashPassword(password, salt) === hash;
+}
+
 function toRecipe(row, sourceRows) {
   const sourceUrls = sourceRows.map((source) => source.url);
   return {
@@ -80,8 +92,16 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
   db.exec(`
     PRAGMA foreign_keys = ON;
     PRAGMA journal_mode = WAL;
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      salt TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS recipes (
       id TEXT PRIMARY KEY,
+      user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
       title TEXT NOT NULL,
       title_key TEXT NOT NULL,
       description TEXT NOT NULL,
@@ -98,6 +118,7 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
       updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS recipes_title_key_idx ON recipes(title_key);
+    CREATE INDEX IF NOT EXISTS recipes_user_id_idx ON recipes(user_id);
     CREATE TABLE IF NOT EXISTS recipe_sources (
       url TEXT PRIMARY KEY,
       recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
@@ -118,6 +139,52 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     console.error("Migration check failed:", error instanceof Error ? error.message : "Unknown error");
   }
 
+  // Migration: add user_id column to recipes if missing
+  try {
+    const columns = db.prepare("PRAGMA table_info(recipes)").all();
+    const hasUserId = columns.some(c => c.name === "user_id");
+    if (!hasUserId) {
+      db.exec("ALTER TABLE recipes ADD COLUMN user_id TEXT REFERENCES users(id) ON DELETE SET NULL;");
+      console.log("Migration: added user_id column to recipes table");
+    }
+  } catch (error) {
+    console.error("Migration check failed:", error instanceof Error ? error.message : "Unknown error");
+  }
+
+  const userByEmail = db.prepare("SELECT * FROM users WHERE email = ?");
+  const userById = db.prepare("SELECT * FROM users WHERE id = ?");
+
+  function createUser(email, password) {
+    const existing = userByEmail.get(email);
+    if (existing) throw new Error("Email already registered");
+    const id = randomUUID();
+    const salt = generateSalt();
+    const passwordHash = hashPassword(password, salt);
+    const now = new Date().toISOString();
+    db.prepare("INSERT INTO users (id, email, password_hash, salt, created_at) VALUES (?, ?, ?, ?, ?)")
+      .run(id, email, passwordHash, salt, now);
+    return { id, email, createdAt: now };
+  }
+
+  function getUserByEmail(email) {
+    const row = userByEmail.get(email);
+    if (!row) return null;
+    return { id: row.id, email: row.email, createdAt: row.created_at };
+  }
+
+  function getUserById(id) {
+    const row = userById.get(id);
+    if (!row) return null;
+    return { id: row.id, email: row.email, createdAt: row.created_at };
+  }
+
+  function verifyUser(email, password) {
+    const row = userByEmail.get(email);
+    if (!row) return null;
+    if (!verifyPassword(password, row.salt, row.password_hash)) return null;
+    return { id: row.id, email: row.email, createdAt: row.created_at };
+  }
+
   const recipeById = db.prepare("SELECT * FROM recipes WHERE id = ?");
   const sourcesByRecipe = db.prepare(
     "SELECT url FROM recipe_sources WHERE recipe_id = ? ORDER BY created_at ASC",
@@ -134,10 +201,17 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     return source ? getRecipe(source.recipe_id) : null;
   }
 
-  function list() {
+  function list(userId) {
+    let query = "SELECT id FROM recipes";
+    const params = [];
+    if (userId) {
+      query += " WHERE user_id = ?";
+      params.push(userId);
+    }
+    query += " ORDER BY updated_at DESC, title COLLATE NOCASE ASC";
     return db
-      .prepare("SELECT id FROM recipes ORDER BY updated_at DESC, title COLLATE NOCASE ASC")
-      .all()
+      .prepare(query)
+      .all(...params)
       .map(({ id }) => getRecipe(id));
   }
 
@@ -177,7 +251,7 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     return totals;
   }
 
-  function saveImported(url, recipe) {
+  function saveImported(url, recipe, userId) {
     const titleKey = normalizeText(recipe.title);
     const recipeFingerprint = fingerprint(titleKey, recipe.ingredients);
     const now = new Date().toISOString();
@@ -213,11 +287,12 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
       const computedTotals = recipe.totals ? recipe.totals : computeTotalsFromIngredients(recipe.ingredients, recipe.basePortions);
       db.prepare(`
         INSERT INTO recipes (
-          id, title, title_key, description, category, prep_time_minutes, base_portions, emoji, color,
+          id, user_id, title, title_key, description, category, prep_time_minutes, base_portions, emoji, color,
           ingredients_json, steps_json, totals_json, fingerprint, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id,
+        userId ?? null,
         recipe.title,
         titleKey,
         recipe.description,
@@ -246,6 +321,10 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
 
   return {
     close: () => db.close(),
+    createUser,
+    getUserByEmail,
+    getUserById,
+    verifyUser,
     deleteRecipe,
     getBySource,
     list,

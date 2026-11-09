@@ -165,6 +165,9 @@ function App() {
   const [portions, setPortions] = useState<number | null>(null);
   const [commitInfo, setCommitInfo] = useState<{ hash: string; date: string; message: string } | null>(null);
   const [ingredientUnits, setIngredientUnits] = useState<Record<number, string>>({});
+  const [user, setUser] = useState<{ id: string; email: string } | null>(null);
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem("recipetor_token"));
+  const [authMode, setAuthMode] = useState<"login" | "register" | null>(null);
 
   useEffect(() => {
     fetch("/commit-info.json")
@@ -172,6 +175,31 @@ function App() {
       .then((data) => setCommitInfo(data))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (token) localStorage.setItem("recipetor_token", token);
+    else localStorage.removeItem("recipetor_token");
+  }, [token]);
+
+  async function checkAuth() {
+    if (!token) return;
+    try {
+      const response = await fetch("/api/auth/me", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setUser(data.user);
+        return;
+      }
+    } catch {}
+    setToken(null);
+    setUser(null);
+  }
+
+  useEffect(() => {
+    checkAuth();
+  }, [token]);
 
   useEffect(() => {
     let active = true;
@@ -187,20 +215,22 @@ function App() {
         if (active) setServerState("offline");
       });
 
-    void fetch("/api/recipes")
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Saved recipes could not be loaded.");
-        return response.json() as Promise<{ recipes: Recipe[] }>;
-      })
-      .then((result) => {
-        if (active) setSavedRecipes(result.recipes);
-      })
-      .catch(() => {
-        if (active) setNotice("Saved recipes couldn't be loaded. Check the recipe server and refresh.");
-      });
+    if (token) {
+      void fetch("/api/recipes", { headers: { Authorization: `Bearer ${token}` } })
+        .then(async (response) => {
+          if (!response.ok) throw new Error("Saved recipes could not be loaded.");
+          return response.json() as Promise<{ recipes: Recipe[] }>;
+        })
+        .then((result) => {
+          if (active) setSavedRecipes(result.recipes);
+        })
+        .catch(() => {
+          if (active) setNotice("Saved recipes couldn't be loaded. Check the recipe server and refresh.");
+        });
+    }
 
     return () => { active = false; };
-  }, []);
+  }, [token]);
 
   const allRecipes = [...savedRecipes, ...recipes];
   const visibleRecipes = allRecipes.filter((recipe) => {
@@ -209,6 +239,53 @@ function App() {
     const matchesFavorites = !showFavorites || favorites.includes(recipe.id);
     return matchesCategory && matchesQuery && matchesFavorites;
   });
+
+  async function apiFetch(path: string, options: RequestInit = {}) {
+    const headers: Record<string, string> = { "Content-Type": "application/json", ...(options.headers as Record<string, string> || {}) };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    return fetch(path, { ...options, headers });
+  }
+
+  async function handleAuth(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const email = formData.get("email")?.toString().trim().toLowerCase();
+    const password = formData.get("password")?.toString();
+    if (!email || !password) {
+      setNotice("Email and password are required.");
+      return;
+    }
+    const endpoint = authMode === "register" ? "/api/auth/register" : "/api/auth/login";
+    setNotice(authMode === "register" ? "Creating account…" : "Signing in…");
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Authentication failed.");
+      setToken(data.token);
+      setUser(data.user);
+      setAuthMode(null);
+      setNotice(authMode === "register" ? "Account created! Welcome to Recipetor." : "Welcome back!");
+      await apiFetch("/api/recipes").then(async (response) => {
+        if (response.ok) {
+          const data = await response.json();
+          setSavedRecipes(data.recipes || []);
+        }
+      });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Authentication failed. Try again.");
+    }
+  }
+
+  function handleLogout() {
+    setToken(null);
+    setUser(null);
+    setSavedRecipes([]);
+    setNotice("Signed out.");
+  }
 
   async function handleImport(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -232,9 +309,8 @@ function App() {
     setIsImporting(true);
     setNotice("Checking the link…");
     try {
-      const response = await fetch("/api/recipes/import", {
+      const response = await apiFetch("/api/recipes/import", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: url.href }),
       });
       if (!response.ok) {
@@ -383,9 +459,39 @@ function App() {
           </button>
         </nav>
         <div className="sidebar-bottom">
-          <div className="privacy-note"><span className="privacy-dot" /> Just your recipes. No personal profile needed.</div>
-          <div className="account-chip"><span className="avatar"><svg className="avatar-icon" viewBox="0 0 512 512" aria-hidden="true"><defs><linearGradient id="burritoBody" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor="#D4A574" stopOpacity={1} /><stop offset="100%" stopColor="#C49564" stopOpacity={1} /></linearGradient><linearGradient id="burritoFilling" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor="#E8B87D" stopOpacity={1} /><stop offset="100%" stopColor="#D8A86D" stopOpacity={1} /></linearGradient><linearGradient id="cheese" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor="#FFD700" stopOpacity={1} /><stop offset="100%" stopColor="#F0C000" stopOpacity={1} /></linearGradient><linearGradient id="beans" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor="#4A2C1A" stopOpacity={1} /><stop offset="100%" stopColor="#3A1C0A" stopOpacity={1} /></linearGradient><filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx={0} dy={2} stdDeviation={3} floodColor="#000000" floodOpacity={0.2} /></filter></defs><path d="M120 180 Q120 120 180 120 L332 120 Q392 120 392 180 L392 332 Q392 392 332 392 L180 392 Q120 392 120 332 Z" fill="url(#burritoBody)" filter="url(#shadow)" /><path d="M140 180 Q140 140 180 140 L332 140 Q372 140 372 180 L372 200 Q372 220 332 220 L180 220 Q140 220 140 180 Z" fill="#B8956A" opacity={0.6} /><path d="M160 160 Q160 145 180 145 L332 145 Q352 145 352 160 L352 175 Q352 185 332 185 L180 185 Q160 185 160 160 Z" fill="url(#burritoFilling)" /><path d="M190 155 Q200 150 210 155 Q220 160 230 155 Q240 150 250 155 Q260 160 270 155 Q280 150 290 155 Q300 160 310 155 Q320 150 330 155" stroke="url(#cheese)" strokeWidth={8} fill="none" strokeLinecap="round" /><circle cx={200} cy={165} r={6} fill="url(#beans)" /><circle cx={240} cy={158} r={5} fill="url(#beans)" /><circle cx={280} cy={162} r={5} fill="url(#beans)" /><circle cx={310} cy={157} r={4} fill="url(#beans)" /><ellipse cx={220} cy={168} rx={3} ry={2} fill="#F5F0E8" /><ellipse cx={260} cy={170} rx={2.5} ry={1.8} fill="#F5F0E8" /><ellipse cx={300} cy={168} rx={2.5} ry={1.8} fill="#F5F0E8" /><path d="M185 170 Q180 165 185 160 Q190 165 185 170" fill="#4CAF50" opacity={0.8} /><path d="M255 175 Q250 170 255 165 Q260 170 255 175" fill="#4CAF50" opacity={0.8} /><path d="M295 172 Q290 167 295 162 Q300 167 295 172" fill="#4CAF50" opacity={0.8} /><circle cx={210} cy={260} r={18} fill="#2D2D2D" /><circle cx={302} cy={260} r={18} fill="#2D2D2D" /><circle cx={215} cy={255} r={6} fill="#FFFFFF" /><circle cx={307} cy={255} r={6} fill="#FFFFFF" /><path d="M210 300 Q256 330 302 300" stroke="#2D2D2D" strokeWidth={4} fill="none" strokeLinecap="round" /><ellipse cx={175} cy={275} rx={15} ry={8} fill="#E8A8A8" opacity={0.5} /><ellipse cx={337} cy={275} rx={15} ry={8} fill="#E8A8A8" opacity={0.5} /><path d="M256 100 Q250 80 256 60" stroke="#FFFFFF" strokeWidth={3} fill="none" opacity={0.6} strokeLinecap="round" /><path d="M230 110 Q225 90 230 70" stroke="#FFFFFF" strokeWidth={2} fill="none" opacity={0.4} strokeLinecap="round" /><path d="M282 110 Q287 90 282 70" stroke="#FFFFFF" strokeWidth={2} fill="none" opacity={0.4} strokeLinecap="round" /></svg></span><span><strong>Your kitchen</strong><small>Private recipe box</small></span></div>
-        </div>
+                  {user ? (
+                    <div className="account-section">
+                      <div className="user-info">
+                        <span className="avatar"><svg className="avatar-icon" viewBox="0 0 512 512" aria-hidden="true"><path fill="#4A2C1A" d="M256 512c-141.4 0-256-94.6-256-211.3 0-147.3 147.6-209.3 165.3-231.1 4.1-5.1 9.3-8.1 14.7-8.1h180c5.4 0 10.6 3 14.7 8.1 17.7 21.8 165.3 83.8 165.3 231.1 0 116.7-114.6 211.3-256 211.3zm0-144c-44.2 0-80-35.8-80-80s35.8-80 80-80 80 35.8 80 80-35.8 80-80 80zm0-32c53 0 96-43 96-96s-43-96-96-96-96 43-96 96 43 96 96 96z"/></svg></span>
+                        <span className="user-email">{user.email}</span>
+                      </div>
+                      <button className="btn btn-secondary" onClick={handleLogout}>Sign out</button>
+                    </div>
+                  ) : authMode ? (
+                    <form onSubmit={handleAuth} className="auth-form">
+                      <h3>{authMode === "register" ? "Create account" : "Sign in"}</h3>
+                      <div className="form-field">
+                        <label htmlFor="auth-email">Email</label>
+                        <input id="auth-email" name="email" type="email" autoComplete="email" required placeholder="you@example.com" />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="auth-password">Password</label>
+                        <input id="auth-password" name="password" type="password" autoComplete={authMode === "register" ? "new-password" : "current-password"} required placeholder="••••••••" />
+                      </div>
+                      <button type="submit" className="btn btn-primary">{authMode === "register" ? "Create account" : "Sign in"}</button>
+                      <button type="button" className="btn btn-ghost" onClick={() => setAuthMode(null)}>Cancel</button>
+                      <p className="auth-switch">{authMode === "register" ? "Already have an account? " : "Don't have an account? "}<button type="button" onClick={() => setAuthMode(authMode === "register" ? "login" : "register")}>{authMode === "register" ? "Sign in" : "Create account"}</button></p>
+                    </form>
+                  ) : (
+                    <div className="account-chip">
+                      <span className="avatar"><svg className="avatar-icon" viewBox="0 0 512 512" aria-hidden="true"><path fill="#4A2C1A" d="M256 512c-141.4 0-256-94.6-256-211.3 0-147.3 147.6-209.3 165.3-231.1 4.1-5.1 9.3-8.1 14.7-8.1h180c5.4 0 10.6 3 14.7 8.1 17.7 21.8 165.3 83.8 165.3 231.1 0 116.7-114.6 211.3-256 211.3zm0-144c-44.2 0-80-35.8-80-80s35.8-80 80-80 80 35.8 80 80-35.8 80-80 80zm0-32c53 0 96-43 96-96s-43-96-96-96-96 43-96 96 43 96 96 96z"/></svg></span>
+                      <span>Sign in to save recipes</span>
+                      <button className="btn btn-primary btn-sm" onClick={() => setAuthMode("login")}>Sign in</button>
+                      <button className="btn btn-secondary btn-sm" onClick={() => setAuthMode("register")}>Create account</button>
+                    </div>
+                  )}
+                  <div className="privacy-note"><span className="privacy-dot" /> Just your recipes. No personal profile needed.</div>
+                </div>
       </aside>
 
       <main className="main-content">

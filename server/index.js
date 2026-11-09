@@ -1,4 +1,5 @@
 import { createServer as createHttpServer } from "node:http";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +10,8 @@ const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const MAX_REQUEST_BYTES = 2048;
 const IMPORT_LIMIT = 10;
 const IMPORT_WINDOW_MS = 60 * 60 * 1000;
+const JWT_SECRET = process.env.RECIPETOR_JWT_SECRET || randomBytes(32).toString("hex");
+const JWT_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const MIME_TYPES = new Map([
   [".css", "text/css; charset=utf-8"],
   [".html", "text/html; charset=utf-8"],
@@ -25,6 +28,48 @@ class HttpError extends Error {
     super(message);
     this.status = status;
   }
+}
+
+function base64UrlEncode(data) {
+  return Buffer.from(data).toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+
+function base64UrlDecode(data) {
+  let base64 = data.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = base64.length % 4;
+  if (pad) base64 += "=".repeat(4 - pad);
+  return Buffer.from(base64, "base64").toString("utf8");
+}
+
+function signJwt(payload) {
+  const header = base64UrlEncode(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+  const body = base64UrlEncode(JSON.stringify(payload));
+  const signatureInput = `${header}.${body}`;
+  const signature = createHash("sha256").update(`${signatureInput}.${JWT_SECRET}`).digest();
+  return `${signatureInput}.${base64UrlEncode(signature)}`;
+}
+
+function verifyJwt(token) {
+  try {
+    const [header, body, signature] = token.split(".");
+    if (!header || !body || !signature) return null;
+    const signatureInput = `${header}.${body}`;
+    const expectedSignature = createHash("sha256").update(`${signatureInput}.${JWT_SECRET}`).digest();
+    if (base64UrlEncode(expectedSignature) !== signature) return null;
+    const payload = JSON.parse(base64UrlDecode(body));
+    if (payload.exp && payload.exp < Date.now()) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function extractUserId(request) {
+  const authHeader = request.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) return null;
+  const token = authHeader.slice(7);
+  const payload = verifyJwt(token);
+  return payload?.sub ?? null;
 }
 
 export function canonicalizeInstagramUrl(input) {
@@ -150,14 +195,50 @@ export function createServer({
     if (pathname === "/api/health" && request.method === "GET") {
       return jsonResponse(response, 200, { ok: true, hermesAvailable: hermesAvailable() });
     }
+    if (pathname === "/api/auth/register" && request.method === "POST") {
+      checkSameOrigin(request);
+      const body = await readJson(request);
+      const email = body?.email?.toString().trim().toLowerCase();
+      const password = body?.password?.toString();
+      if (!email || !email.includes("@")) return jsonResponse(response, 400, { error: "Valid email required." });
+      if (!password || password.length < 6) return jsonResponse(response, 400, { error: "Password must be at least 6 characters." });
+      try {
+        const user = store.createUser(email, password);
+        const token = signJwt({ sub: user.id, email: user.email, exp: Date.now() + JWT_EXPIRY_MS });
+        return jsonResponse(response, 200, { user: { id: user.id, email: user.email }, token });
+      } catch (error) {
+        if (error.message === "Email already registered") return jsonResponse(response, 409, { error: "Email already registered." });
+        throw error;
+      }
+    }
+    if (pathname === "/api/auth/login" && request.method === "POST") {
+      checkSameOrigin(request);
+      const body = await readJson(request);
+      const email = body?.email?.toString().trim().toLowerCase();
+      const password = body?.password?.toString();
+      if (!email || !password) return jsonResponse(response, 400, { error: "Email and password required." });
+      const user = store.verifyUser(email, password);
+      if (!user) return jsonResponse(response, 401, { error: "Invalid email or password." });
+      const token = signJwt({ sub: user.id, email: user.email, exp: Date.now() + JWT_EXPIRY_MS });
+      return jsonResponse(response, 200, { user: { id: user.id, email: user.email }, token });
+    }
+    if (pathname === "/api/auth/me" && request.method === "GET") {
+      const userId = extractUserId(request);
+      if (!userId) return jsonResponse(response, 401, { error: "Not authenticated." });
+      const user = store.getUserById(userId);
+      if (!user) return jsonResponse(response, 404, { error: "User not found." });
+      return jsonResponse(response, 200, { user: { id: user.id, email: user.email } });
+    }
     if (pathname === "/api/recipes" && request.method === "GET") {
-      return jsonResponse(response, 200, { recipes: store.list() });
+      const userId = extractUserId(request);
+      return jsonResponse(response, 200, { recipes: store.list(userId) });
     }
     if (pathname === "/api/recipes/import" && request.method === "POST") {
       checkSameOrigin(request);
       const body = await readJson(request);
       const url = canonicalizeInstagramUrl(body?.url);
       console.log(`[import] URL: ${url}`);
+      const userId = extractUserId(request);
       const existing = store.getBySource(url);
       if (existing) return jsonResponse(response, 200, { recipe: existing, duplicate: true, reason: "source" });
 
@@ -192,7 +273,7 @@ export function createServer({
           throw new HttpError(502, `Hermes could not extract a recipe: ${reason}`);
         }
 
-        const saved = store.saveImported(url, extracted);
+        const saved = store.saveImported(url, extracted, userId);
         console.log(`[import] Recipe saved: ${saved.recipe.id}, duplicate: ${saved.duplicate}`);
         return {
           recipe: saved.recipe,

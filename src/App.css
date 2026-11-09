@@ -262,3 +262,24 @@ h1 { margin-bottom: 7px; font-family: Georgia, "Times New Roman", serif; font-si
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
+
+.account-section { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 8px; border-top: 1px solid #f0ece6; }
+.user-info { display: flex; align-items: center; gap: 10px; }
+.user-email { color: #403a34; font-size: 12px; font-weight: 550; }
+.auth-form { display: grid; gap: 12px; padding: 14px 8px; border-top: 1px solid #f0ece6; }
+.auth-form h3 { margin: 0; font-size: 13px; font-weight: 650; }
+.form-field { display: grid; gap: 4px; }
+.form-field label { color: #70695f; font-size: 10px; font-weight: 600; }
+.form-field input { height: 36px; padding: 0 12px; border: 1px solid #ece7df; border-radius: 8px; background: #fff; color: #403a34; font-size: 11px; }
+.form-field input:focus { outline: 2px solid #e8a189; outline-offset: 1px; }
+.auth-switch { margin: 4px 0 0; color: #91897e; font-size: 11px; text-align: center; }
+.auth-switch button { background: none; border: 0; color: #bc5737; font-weight: 600; cursor: pointer; }
+.auth-switch button:hover { text-decoration: underline; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; padding: 0 14px; border: 0; border-radius: 8px; font-size: 11px; font-weight: 650; cursor: pointer; }
+.btn-primary { background: #e56b45; color: #fff; }
+.btn-primary:hover { background: #c85332; }
+.btn-secondary { border: 1px solid #e9e3da; background: #fff; color: #544d44; }
+.btn-secondary:hover { background: #faf8f4; }
+.btn-ghost { background: transparent; color: #70695f; border: 1px solid transparent; }
+.btn-ghost:hover { background: #f2eee8; }
+.btn-sm { min-height: 30px; padding: 0 10px; font-size: 10px; }

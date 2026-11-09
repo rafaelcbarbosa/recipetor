@@ -1,5 +1,5 @@
 {
-  "hash": "6f84cf0",
-  "date": "2026-11-08 19:07:49 -0600",
-  "message": "Show useful recipe import failure details"
+  "hash": "c8a8405",
+  "date": "2026-11-08 19:51:22 -0600",
+  "message": "Add DB migration for totals_json, add import logging"
 }
