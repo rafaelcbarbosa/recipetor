@@ -10,6 +10,7 @@ alwaysApply: true
 - Keep answers short. Show only the changed code.
 - As the human to install whatever you need if you can´t install it yourself on this computer.
 - the app should be always pushed to GITHUB. there is a job on the server that pulls updates every 1 min.
+- you can always test it after the push and pull to the server using the https://recipetor.barbtech.com/ or http://192.168.1.200:8787/
 
 The App
 - this is an app to store recipes
@@ -23,6 +24,7 @@ The App
 - **Implemented: PWA with offline caching (service worker), installable manifest, mobile-first responsive design per DESIGN.md tokens.**
 - **Implemented: Auto-deploy pipeline — push to GitHub → home lab server (192.168.1.200) pulls via cron every 1 min → accessible at recipetor.barbtech.com via Cloudflare Tunnel.**
 - **Implemented: Shared recipe library — all recipes visible to all users. Background extraction jobs with granular progress (queued → fetching → extracting → saving → completed/failed). Multiple users can track the same URL extraction simultaneously. Verbose failure reporting with stderr capture for troubleshooting. Mobile-first auth forms.**
+- **Implemented: Serial extraction queue — single background processor handles all extraction jobs one at a time across all users. Queue view UI shows all jobs with status, progress, stage, errors, and links to completed recipes. Real-time polling updates every 2 seconds. Mobile-first responsive design.**
 - I don´t want data from the user. no need to track their information. lets have telemetry so we can better understand the app usage.
 - when the user pass the instagram recipe, this link should go to the server. if the server alreeady found the recipe on previous sessions, the server will return it to the user. if the server never received this recipe/link, it will call a local api that will pass the link to a Local AI model/agent and it return the recipe to the app so it can be added to the db. If the recipe is duplicated, save the link on the right recipe and return that to the user. 
 - The app will run on my 192.168.1.200 server on my home lab.
