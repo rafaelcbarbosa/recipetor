@@ -66,7 +66,7 @@ function validateIngredientLine(item) {
   if (!item || typeof item !== "object" || Array.isArray(item)) {
     throw new Error("Hermes returned an invalid ingredient line.");
   }
-  const amount = boundedNumber(item.amount, "amount", { min: 0, max: 100000 });
+  const amount = boundedNumber(item.amount, "amount", { min: 0, max: 100000, allowNull: true });
   const unit = boundedString(item.unit ?? "", "unit", 30, { allowEmpty: true });
   const name = boundedString(item.name, "ingredient name", 250);
   return { amount, unit, name };
@@ -135,7 +135,7 @@ export function validateRecipeResult(value) {
 
 export function createHermesExtractor({
   binary = process.env.HERMES_BIN || "hermes",
-  timeoutMs = Number(process.env.HERMES_TIMEOUT_MS || 120_000),
+  timeoutMs = Number(process.env.HERMES_TIMEOUT_MS || 300_000),
 } = {}) {
   return async function extractRecipe(url) {
     const prompt = [

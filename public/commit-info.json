@@ -1,5 +1,5 @@
 {
-  "hash": "ae8fce5",
-  "date": "2026-11-09 21:30:35 -0600",
-  "message": "Update 01-general.md with serial extraction queue implementation"
+  "hash": "105d324",
+  "date": "2026-11-09 21:44:21 -0600",
+  "message": "Add listExtractionJobs export to recipe-store"
 }
