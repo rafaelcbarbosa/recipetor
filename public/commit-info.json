@@ -1,5 +1,5 @@
 {
-  "hash": "d2a130e",
-  "date": "2026-11-09 21:50:44 -0600",
-  "message": "Fix ingredient amount validation (allow null), increase Hermes timeout to 5 minutes"
+  "hash": "1a3a569",
+  "date": "2026-11-09 22:06:41 -0600",
+  "message": "Fix PWA cache invalidation: embed commit hash in SW cache name, use network-first for HTML"
 }

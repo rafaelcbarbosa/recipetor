@@ -814,14 +814,14 @@ function App() {
             <div className="modal-recipe-columns">
               <div>
                 <div className="ingredients-header">
-                  <h3>Ingredients <span>({selectedRecipe.ingredients.length})</span></h3>
+                  <h3>Ingredients <span>({selectedRecipe.ingredients?.length ?? 0})</span></h3>
                   {selectedRecipe.basePortions && <div className="portions-control">
                     <label>Portions</label>
                     <input type="number" min="1" value={portions ?? selectedRecipe.basePortions} onChange={(event) => setPortions(Math.max(1, parseInt(event.target.value, 10) || 1))} />
                   </div>}
                 </div>
                 <ul>
-                  {selectedRecipe.ingredients.map((ingredient, index) => {
+                  {selectedRecipe.ingredients?.map((ingredient, index) => {
                     const scale = selectedRecipe.basePortions && portions ? portions / selectedRecipe.basePortions : 1;
                     const baseAmount = ingredient.amount !== null ? ingredient.amount * scale : null;
                     const currentUnit = ingredientUnits[index] ?? ingredient.unit;
