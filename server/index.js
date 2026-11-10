@@ -47,9 +47,6 @@ function signJwt(payload) {
   const signatureInput = `${header}.${body}`;
   const signature = createHash("sha256").update(`${signatureInput}.${JWT_SECRET}`).digest();
   const encodedSig = base64UrlEncode(signature);
-  console.log('[signJwt] signatureInput:', signatureInput);
-  console.log('[signJwt] JWT_SECRET:', JWT_SECRET?.slice(0, 8) + '...');
-  console.log('[signJwt] signature (encoded):', encodedSig);
   return `${signatureInput}.${encodedSig}`;
 }
 
@@ -60,11 +57,6 @@ function verifyJwt(token) {
     const signatureInput = `${header}.${body}`;
     const expectedSignature = createHash("sha256").update(`${signatureInput}.${JWT_SECRET}`).digest();
     const encodedExpected = base64UrlEncode(expectedSignature);
-    console.log('[verifyJwt] signatureInput:', signatureInput);
-    console.log('[verifyJwt] JWT_SECRET:', JWT_SECRET?.slice(0, 8) + '...');
-    console.log('[verifyJwt] expected (encoded):', encodedExpected);
-    console.log('[verifyJwt] actual signature:', signature);
-    console.log('[verifyJwt] match:', encodedExpected === signature);
     if (encodedExpected !== signature) return null;
     const payload = JSON.parse(base64UrlDecode(body));
     if (payload.exp && payload.exp < Date.now()) return null;
@@ -331,17 +323,6 @@ export function createServer({
       const user = store.getUserById(userId);
       if (!user) return jsonResponse(response, 404, { error: "User not found." });
       return jsonResponse(response, 200, { user: { id: user.id, email: user.email } });
-    }
-    // DEBUG: Test JWT functions
-    if (pathname === "/api/debug/jwt-test" && request.method === "GET") {
-      const testPayload = { sub: "debug-test", email: "debug@test.com", exp: Date.now() + 86400000 };
-      const token = signJwt(testPayload);
-      const verified = verifyJwt(token);
-      return jsonResponse(response, 200, { token, verified });
-    }
-    // DEBUG: Check JWT secret
-    if (pathname === "/api/debug/jwt-secret" && request.method === "GET") {
-      return jsonResponse(response, 200, { jwtSecret: JWT_SECRET?.slice(0, 8) + "..." });
     }
     if (pathname === "/api/auth/delete-account" && request.method === "DELETE") {
       const userId = extractUserId(request);

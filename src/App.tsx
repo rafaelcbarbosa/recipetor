@@ -266,8 +266,8 @@ function App() {
       });
       const data = await response.json();
       if (!response.ok) {
-        if (data.requiresVerification && data.user?.email) {
-          setVerifyEmail(data.user.email);
+        if (data.requiresVerification && data.email) {
+          setVerifyEmail(data.email);
           setAuthMode("verify");
           setNotice(data.message || "Please check your email for a verification code.");
         } else {

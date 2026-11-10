@@ -1,5 +1,5 @@
 {
-  "hash": "4c4412d",
-  "date": "2026-11-10 12:25:07 -0600",
-  "message": "debug: add JWT test endpoint inside request handler"
+  "hash": "b55ecde",
+  "date": "2026-11-10 12:37:25 -0600",
+  "message": "debug: add JWT sign/verify logging"
 }
