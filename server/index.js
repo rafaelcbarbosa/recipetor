@@ -322,6 +322,13 @@ export function createServer({
       if (!user) return jsonResponse(response, 404, { error: "User not found." });
       return jsonResponse(response, 200, { user: { id: user.id, email: user.email } });
     }
+    // DEBUG: Test JWT functions
+    if (pathname === "/api/debug/jwt-test" && request.method === "GET") {
+      const testPayload = { sub: "debug-test", email: "debug@test.com", exp: Date.now() + 86400000 };
+      const token = signJwt(testPayload);
+      const verified = verifyJwt(token);
+      return jsonResponse(response, 200, { token, verified });
+    }
     // DEBUG: Check JWT secret
     if (pathname === "/api/debug/jwt-secret" && request.method === "GET") {
       return jsonResponse(response, 200, { jwtSecret: JWT_SECRET?.slice(0, 8) + "..." });
