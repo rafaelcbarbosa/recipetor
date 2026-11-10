@@ -268,6 +268,24 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
       }));
   }
 
+  function listExtractionJobs() {
+    return db
+      .prepare("SELECT * FROM extraction_jobs ORDER BY created_at DESC")
+      .all()
+      .map((row) => ({
+        id: row.id,
+        url: row.url,
+        status: row.status,
+        stage: row.stage,
+        progress: row.progress,
+        errorMessage: row.error_message,
+        recipeId: row.recipe_id,
+        createdBy: row.created_by,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }));
+  }
+
   function updateExtractionJob(id, updates) {
     const fields = [];
     const params = [];
@@ -425,6 +443,7 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     getExtractionJob,
     getExtractionJobByUrl,
     getExtractionJobsByUrl,
+    listExtractionJobs,
     updateExtractionJob,
   };
 }
