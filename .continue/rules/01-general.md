@@ -22,6 +22,7 @@ The App
 - **Implemented: Granular progress feedback during extraction — "Checking the link…" then "Extracting recipe with Hermes…". Fixed JSON parse errors on failed responses.**
 - **Implemented: PWA with offline caching (service worker), installable manifest, mobile-first responsive design per DESIGN.md tokens.**
 - **Implemented: Auto-deploy pipeline — push to GitHub → home lab server (192.168.1.200) pulls via cron every 1 min → accessible at recipetor.barbtech.com via Cloudflare Tunnel.**
+- **Implemented: Shared recipe library — all recipes visible to all users. Background extraction jobs with granular progress (queued → fetching → extracting → saving → completed/failed). Multiple users can track the same URL extraction simultaneously. Verbose failure reporting with stderr capture for troubleshooting. Mobile-first auth forms.**
 - I don´t want data from the user. no need to track their information. lets have telemetry so we can better understand the app usage.
 - when the user pass the instagram recipe, this link should go to the server. if the server alreeady found the recipe on previous sessions, the server will return it to the user. if the server never received this recipe/link, it will call a local api that will pass the link to a Local AI model/agent and it return the recipe to the app so it can be added to the db. If the recipe is duplicated, save the link on the right recipe and return that to the user. 
 - The app will run on my 192.168.1.200 server on my home lab.
