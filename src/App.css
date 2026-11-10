@@ -85,6 +85,32 @@ h1 { margin-bottom: 7px; font-family: Georgia, "Times New Roman", serif; font-si
 .progress-stage { text-transform: capitalize; }
 
 .notice { margin: 10px 0 0; color: #715942; font-size: 11px; line-height: 1.45; }
+
+.queue-section { margin-top: 24px; }
+.queue-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.queue-header h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 15px; font-weight: 650; }
+.queue-empty { padding: 24px; text-align: center; color: #91897e; font-size: 13px; background: #faf8f4; border: 1px dashed #e5dfd5; border-radius: 12px; }
+.queue-list { display: grid; gap: 12px; }
+.queue-item { border: 1px solid #ece7df; border-radius: 12px; background: #fff; padding: 16px; }
+.queue-item.queue-pending { border-left: 4px solid #d1a96b; }
+.queue-item.queue-processing { border-left: 4px solid #e56b45; }
+.queue-item.queue-completed { border-left: 4px solid #789477; }
+.queue-item.queue-failed { border-left: 4px solid #c4664a; }
+.queue-url { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.queue-status-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 9px; font-weight: 600; text-transform: uppercase; }
+.queue-status-pending { background: #fef3e2; color: #b8860b; }
+.queue-status-processing { background: #fef3e2; color: #e56b45; }
+.queue-status-completed { background: #f0f8ef; color: #58765b; }
+.queue-status-failed { background: #fdf3f1; color: #c4664a; }
+.queue-link { flex: 1; min-width: 200px; color: #bc5737; text-decoration: none; font-size: 11px; word-break: break-all; }
+.queue-link:hover { text-decoration: underline; }
+.queue-progress { margin-bottom: 10px; }
+.queue-meta { display: flex; flex-wrap: wrap; gap: 12px; font-size: 10px; color: #91897e; }
+.queue-error { color: #c4664a; font-weight: 500; }
+.queue-success { color: #58765b; font-weight: 500; }
+.queue-success a { color: #bc5737; text-decoration: none; }
+.queue-success a:hover { text-decoration: underline; }
+
 .library-section { margin-top: 36px; }
 .library-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; }
 .library-heading h2 { display: flex; align-items: center; gap: 9px; margin-bottom: 5px; font-size: 17px; font-weight: 680; letter-spacing: -.35px; }
@@ -224,6 +250,14 @@ h1 { margin-bottom: 7px; font-family: Georgia, "Times New Roman", serif; font-si
   .import-foot { flex-wrap: wrap; gap: 4px 10px; font-size: 8px; }
   .import-progress { margin-top: 8px; }
   .progress-info { font-size: 8px; }
+  .queue-section { margin-top: 20px; }
+  .queue-header { flex-wrap: wrap; gap: 8px; }
+  .queue-header h2 { font-size: 14px; }
+  .queue-item { padding: 12px; }
+  .queue-url { gap: 6px; }
+  .queue-status-badge { font-size: 8px; padding: 2px 6px; }
+  .queue-link { min-width: 100%; font-size: 10px; }
+  .queue-meta { gap: 8px; font-size: 9px; }
   .library-section { margin-top: 29px; }
   .library-heading { align-items: start; flex-direction: column; gap: 13px; }
   .library-heading h2 { font-size: 16px; }

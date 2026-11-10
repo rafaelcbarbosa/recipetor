@@ -189,6 +189,73 @@ export function createServer({
   const rateLimits = new Map();
   const inFlight = new Map();
 
+  // Serial job queue - processes one job at a time across all users
+  const jobQueue = [];
+  let isProcessing = false;
+
+  async function processQueue() {
+    if (isProcessing || jobQueue.length === 0) return;
+    isProcessing = true;
+
+    while (jobQueue.length > 0) {
+      const { jobId, url, userId } = jobQueue.shift();
+      try {
+        store.updateExtractionJob(jobId, { status: "processing", stage: "queued", progress: 5 });
+        console.log(`[queue] Job ${jobId}: Starting extraction for ${url}`);
+
+        store.updateExtractionJob(jobId, { status: "processing", stage: "fetching", progress: 10 });
+
+        store.updateExtractionJob(jobId, { status: "processing", stage: "extracting", progress: 30 });
+        let extracted;
+        try {
+          extracted = await extractRecipe(url);
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : "Unknown extraction error";
+          console.error(`[queue] Job ${jobId}: Hermes extraction failed:`, errorMsg);
+          store.updateExtractionJob(jobId, {
+            status: "failed",
+            stage: "failed",
+            progress: 100,
+            errorMessage: `Hermes extraction failed: ${errorMsg}`,
+          });
+          continue;
+        }
+
+        store.updateExtractionJob(jobId, { status: "processing", stage: "saving", progress: 70 });
+        console.log(`[queue] Job ${jobId}: Hermes returned, saving recipe`);
+
+        const saved = store.saveImported(url, extracted, userId);
+        console.log(`[queue] Job ${jobId}: Recipe saved: ${saved.recipe.id}, duplicate: ${saved.duplicate}`);
+
+        store.updateExtractionJob(jobId, {
+          status: "completed",
+          stage: "completed",
+          progress: 100,
+          recipeId: saved.recipe.id,
+        });
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : "Unknown error";
+        console.error(`[queue] Job ${jobId}: Failed:`, errorMsg);
+        store.updateExtractionJob(jobId, {
+          status: "failed",
+          stage: "failed",
+          progress: 100,
+          errorMessage: `Extraction failed: ${errorMsg}`,
+        });
+      }
+    }
+
+    isProcessing = false;
+  }
+
+  function enqueueJob(jobId, url, userId) {
+    jobQueue.push({ jobId, url, userId });
+    if (!isProcessing) {
+      // Process asynchronously
+      processQueue();
+    }
+  }
+
   async function handleRequest(request, response) {
     const pathname = new URL(request.url, "http://localhost").pathname;
 
@@ -262,56 +329,16 @@ export function createServer({
       // Create new extraction job
       const job = store.createExtractionJob(url, userId);
 
-      // Start background extraction
-      processExtraction(job.id, url, userId, extractRecipe, store);
+      // Add to serial queue
+      enqueueJob(job.id, url, userId);
 
-      return jsonResponse(response, 202, { job, message: "Extraction started. Poll status endpoint for progress." });
+      return jsonResponse(response, 202, { job, message: "Extraction queued. Poll status endpoint for progress." });
     }
 
-    // Background extraction handler
-    async function processExtraction(jobId, url, userId, extractRecipe, store) {
-      try {
-        store.updateExtractionJob(jobId, { status: "processing", stage: "fetching", progress: 10 });
-        console.log(`[import] Job ${jobId}: Starting extraction for ${url}`);
-
-        store.updateExtractionJob(jobId, { status: "processing", stage: "extracting", progress: 30 });
-        let extracted;
-        try {
-          extracted = await extractRecipe(url);
-        } catch (error) {
-          const errorMsg = error instanceof Error ? error.message : "Unknown extraction error";
-          console.error(`[import] Job ${jobId}: Hermes extraction failed:`, errorMsg);
-          store.updateExtractionJob(jobId, {
-            status: "failed",
-            stage: "failed",
-            progress: 100,
-            errorMessage: `Hermes extraction failed: ${errorMsg}`,
-          });
-          return;
-        }
-
-        store.updateExtractionJob(jobId, { status: "processing", stage: "saving", progress: 70 });
-        console.log(`[import] Job ${jobId}: Hermes returned, saving recipe`);
-
-        const saved = store.saveImported(url, extracted, userId);
-        console.log(`[import] Job ${jobId}: Recipe saved: ${saved.recipe.id}, duplicate: ${saved.duplicate}`);
-
-        store.updateExtractionJob(jobId, {
-          status: "completed",
-          stage: "completed",
-          progress: 100,
-          recipeId: saved.recipe.id,
-        });
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : "Unknown error";
-        console.error(`[import] Job ${jobId}: Failed:`, errorMsg);
-        store.updateExtractionJob(jobId, {
-          status: "failed",
-          stage: "failed",
-          progress: 100,
-          errorMessage: `Extraction failed: ${errorMsg}`,
-        });
-      }
+    // Queue view - get all extraction jobs
+    if (pathname === "/api/recipes/import/queue" && request.method === "GET") {
+      const jobs = store.listExtractionJobs();
+      return jsonResponse(response, 200, { jobs });
     }
 
     // Get extraction job status by job ID

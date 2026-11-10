@@ -176,6 +176,8 @@ function App() {
   const [user, setUser] = useState<{ id: string; email: string } | null>(null);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem("recipetor_token"));
   const [authMode, setAuthMode] = useState<"login" | "register" | null>(null);
+  const [showQueue, setShowQueue] = useState(false);
+  const [queueJobs, setQueueJobs] = useState<Array<{ id: string; url: string; status: string; stage: string; progress: number; errorMessage?: string; recipeId?: string; createdBy: string | null; createdAt: string }>>([]);
 
   useEffect(() => {
     fetch("/commit-info.json")
@@ -252,6 +254,18 @@ function App() {
     const headers: Record<string, string> = { "Content-Type": "application/json", ...(options.headers as Record<string, string> || {}) };
     if (token) headers.Authorization = `Bearer ${token}`;
     return fetch(path, { ...options, headers });
+  }
+
+  async function fetchQueue() {
+    try {
+      const response = await apiFetch("/api/recipes/import/queue");
+      if (response.ok) {
+        const data = await response.json();
+        setQueueJobs(data.jobs || []);
+      }
+    } catch {
+      // Queue fetch failed silently
+    }
   }
 
   async function handleAuth(event: FormEvent<HTMLFormElement>) {
@@ -669,10 +683,53 @@ function App() {
                   {serverState === "checking" ? "Checking recipe server…" : serverState === "ready" ? "Hermes connected" : serverState === "hermes-missing" ? "Hermes is not available on the server" : "Recipe server unavailable"}
                 </span>
                 <span>Duplicate recipes are grouped together.</span>
+                <button className="btn btn-ghost btn-sm" onClick={() => { setShowQueue(!showQueue); if (!showQueue) fetchQueue(); }}>
+                  <Icon name="collection" size={14} /> {showQueue ? "Hide queue" : "View queue"}
+                </button>
               </div>
               {notice && <p className="notice" role="status">{notice}</p>}
             </div>
           </section>
+
+          {showQueue && (
+            <section className="queue-section" aria-labelledby="queue-title">
+              <div className="queue-header">
+                <h2 id="queue-title"><Icon name="collection" size={18} /> Extraction Queue</h2>
+                <button className="btn btn-ghost btn-sm" onClick={() => { fetchQueue(); }}>Refresh</button>
+              </div>
+              {queueJobs.length === 0 ? (
+                <p className="queue-empty">No extraction jobs in queue.</p>
+              ) : (
+                <div className="queue-list">
+                  {queueJobs.map((job) => (
+                    <article key={job.id} className={`queue-item queue-${job.status}`}>
+                      <div className="queue-url">
+                        <span className="queue-status-badge queue-status-{job.status}">{job.status}</span>
+                        <a href={job.url} target="_blank" rel="noopener noreferrer" className="queue-link">
+                          {job.url}
+                        </a>
+                      </div>
+                      <div className="queue-progress">
+                        <div className="progress-bar">
+                          <div className="progress-fill" style={{ width: `${job.progress}%` }} />
+                        </div>
+                        <div className="progress-info">
+                          <span className="progress-stage">{job.stage.charAt(0).toUpperCase() + job.stage.slice(1)}</span>
+                          <span className="progress-percent">{job.progress}%</span>
+                        </div>
+                      </div>
+                      <div className="queue-meta">
+                        <span>Submitted: {new Date(job.createdAt).toLocaleString()}</span>
+                        {job.createdBy && <span>By: {job.createdBy}</span>}
+                        {job.errorMessage && <span className="queue-error">Error: {job.errorMessage}</span>}
+                        {job.recipeId && <span className="queue-success">Recipe ready! <a href={`#${job.recipeId}`} onClick={() => { setSelectedRecipe(savedRecipes.find(r => r.id === job.recipeId) || null); setShowQueue(false); }}>View</a></span>}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
 
           <section className="library-section" aria-labelledby="library-title">
             <div className="library-heading">
