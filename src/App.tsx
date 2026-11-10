@@ -351,7 +351,9 @@ function App() {
     }
   }
 
-  async function handleForgotPassword() {
+  async function handleForgotPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    console.log("[ForgotPassword] Submitting with email:", resetEmail);
     if (!resetEmail) return;
     setNotice("Sending reset code…");
     try {
@@ -361,10 +363,12 @@ function App() {
         body: JSON.stringify({ email: resetEmail }),
       });
       const data = await response.json();
+      console.log("[ForgotPassword] Response:", response.status, data);
       if (!response.ok) throw new Error(data.error || "Failed to send reset code.");
       setAuthMode("reset-password");
       setNotice("Reset code sent! Check the server logs for the code.");
     } catch (error) {
+      console.error("[ForgotPassword] Error:", error);
       setNotice(error instanceof Error ? error.message : "Failed to send reset code. Try again.");
     }
   }
