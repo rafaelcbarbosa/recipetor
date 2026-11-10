@@ -1,5 +1,5 @@
 {
-  "hash": "1a3a569",
-  "date": "2026-11-09 22:06:41 -0600",
-  "message": "Fix PWA cache invalidation: embed commit hash in SW cache name, use network-first for HTML"
+  "hash": "b6245e6",
+  "date": "2026-11-09 22:22:13 -0600",
+  "message": "Fix runtime error: guard against undefined ingredients in recipe modal"
 }

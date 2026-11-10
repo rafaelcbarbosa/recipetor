@@ -861,7 +861,7 @@ function App() {
                   })}
                 </ul>
               </div>
-              <div><h3>Let’s make it</h3><ol>{selectedRecipe.steps.map((step) => <li key={step}>{step}</li>)}</ol></div>
+              <div><h3>Let’s make it</h3><ol>{selectedRecipe.steps?.map((step) => <li key={step}>{step}</li>)}</ol></div>
             </div>
           </div>
         </section>
