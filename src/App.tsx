@@ -108,8 +108,9 @@ function App() {
   const [ingredientUnits, setIngredientUnits] = useState<Record<number, string>>({});
   const [user, setUser] = useState<{ id: string; email: string } | null>(null);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem("recipetor_token"));
-  const [authMode, setAuthMode] = useState<"login" | "register" | "verify" | null>(null);
+  const [authMode, setAuthMode] = useState<"login" | "register" | "verify" | "forgot-password" | "reset-password" | null>(null);
   const [verifyEmail, setVerifyEmail] = useState<string>("");
+  const [resetEmail, setResetEmail] = useState<string>("");
   const [showQueue, setShowQueue] = useState(false);
   const [queueJobs, setQueueJobs] = useState<Array<{ id: string; url: string; status: string; stage: string; progress: number; errorMessage?: string; recipeId?: string; createdBy: string | null; createdAt: string }>>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -223,86 +224,115 @@ function App() {
   }
 
   async function handleAuth(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    const email = formData.get("email")?.toString().trim().toLowerCase();
-    const password = formData.get("password")?.toString();
-    const code = formData.get("code")?.toString().trim();
-    
-    if (authMode === "verify") {
-      if (!verifyEmail || !code) {
-        setNotice("Email and verification code are required.");
+      event.preventDefault();
+      const formData = new FormData(event.currentTarget);
+      const email = formData.get("email")?.toString().trim().toLowerCase();
+      const password = formData.get("password")?.toString();
+      const code = formData.get("code")?.toString().trim();
+      const newPassword = formData.get("newPassword")?.toString();
+
+      if (authMode === "verify") {
+        if (!verifyEmail || !code) {
+          setNotice("Email and verification code are required.");
+          return;
+        }
+        setNotice("Verifying email…");
+        try {
+          const response = await fetch("/api/auth/verify-email", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: verifyEmail, code }),
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "Verification failed.");
+          setNotice("Email verified! You can now sign in.");
+          setAuthMode("login");
+          return;
+        } catch (error) {
+          setNotice(error instanceof Error ? error.message : "Verification failed. Try again.");
+          return;
+        }
+      }
+
+      if (authMode === "reset-password") {
+        if (!resetEmail || !code || !newPassword) {
+          setNotice("Email, code, and new password are required.");
+          return;
+        }
+        if (newPassword.length < 6) {
+          setNotice("Password must be at least 6 characters.");
+          return;
+        }
+        setNotice("Resetting password…");
+        try {
+          const response = await fetch("/api/auth/reset-password", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: resetEmail, code, newPassword }),
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "Password reset failed.");
+          setNotice("Password reset successfully! You can now sign in.");
+          setAuthMode("login");
+          setResetEmail("");
+          return;
+        } catch (error) {
+          setNotice(error instanceof Error ? error.message : "Password reset failed. Try again.");
+          return;
+        }
+      }
+
+      if (!email || !password) {
+        setNotice("Email and password are required.");
         return;
       }
-      setNotice("Verifying email…");
+      const endpoint = authMode === "register" ? "/api/auth/register" : "/api/auth/login";
+      setNotice(authMode === "register" ? "Creating account…" : "Signing in…");
       try {
-        const response = await fetch("/api/auth/verify-email", {
+        const response = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: verifyEmail, code }),
+          body: JSON.stringify({ email, password }),
         });
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Verification failed.");
-        setNotice("Email verified! You can now sign in.");
-        setAuthMode("login");
-        return;
+        if (!response.ok) {
+          if (data.requiresVerification && data.email) {
+            setVerifyEmail(data.email);
+            setAuthMode("verify");
+            setNotice(data.message || "Please check your email for a verification code.");
+          } else {
+            throw new Error(data.error || "Authentication failed.");
+          }
+          return;
+        }
+        setToken(data.token);
+        setUser(data.user);
+        setAuthMode(null);
+        setNotice(authMode === "register" ? "Account created! Welcome to Recipetor." : "Welcome back!");
+        // Fetch favorites and history
+        const [favRes, histRes] = await Promise.all([
+          fetch("/api/favorites", { headers: { Authorization: `Bearer ${data.token}` } }),
+          fetch("/api/history", { headers: { Authorization: `Bearer ${data.token}` } }),
+        ]);
+        if (favRes.ok) {
+          const favData = await favRes.json();
+          setFavorites(favData.favorites || []);
+        }
+        if (histRes.ok) {
+          const histData = await histRes.json();
+          setHistory(histData.history || []);
+        }
+        // Refresh saved recipes
+        await apiFetch("/api/recipes").then(async (response) => {
+          if (response.ok) {
+            const data = await response.json();
+            setSavedRecipes(data.recipes || []);
+          }
+        });
       } catch (error) {
-        setNotice(error instanceof Error ? error.message : "Verification failed. Try again.");
-        return;
+        setNotice(error instanceof Error ? error.message : "Authentication failed. Try again.");
       }
     }
-    
-    if (!email || !password) {
-      setNotice("Email and password are required.");
-      return;
-    }
-    const endpoint = authMode === "register" ? "/api/auth/register" : "/api/auth/login";
-    setNotice(authMode === "register" ? "Creating account…" : "Signing in…");
-    try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        if (data.requiresVerification && data.email) {
-          setVerifyEmail(data.email);
-          setAuthMode("verify");
-          setNotice(data.message || "Please check your email for a verification code.");
-        } else {
-          throw new Error(data.error || "Authentication failed.");
-        }
-        return;
-      }
-      setToken(data.token);
-      setUser(data.user);
-      setAuthMode(null);
-      setNotice(authMode === "register" ? "Account created! Welcome to Recipetor." : "Welcome back!");
-      // Fetch favorites and history
-      const [favRes, histRes] = await Promise.all([
-        fetch("/api/favorites", { headers: { Authorization: `Bearer ${data.token}` } }),
-        fetch("/api/history", { headers: { Authorization: `Bearer ${data.token}` } }),
-      ]);
-      if (favRes.ok) {
-        const favData = await favRes.json();
-        setFavorites(favData.favorites || []);
-      }
-      if (histRes.ok) {
-        const histData = await histRes.json();
-        setHistory(histData.history || []);
-      }
-      // Refresh saved recipes
-      await apiFetch("/api/recipes").then(async (response) => {
-        if (response.ok) {
-          const data = await response.json();
-          setSavedRecipes(data.recipes || []);
-        }
-      });
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Authentication failed. Try again.");
-    }
-  }
 
   async function handleResendVerification() {
     if (!verifyEmail) return;
@@ -316,6 +346,41 @@ function App() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Failed to resend code.");
       setNotice("New verification code sent!");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Failed to resend code. Try again.");
+    }
+  }
+
+  async function handleForgotPassword() {
+    if (!resetEmail) return;
+    setNotice("Sending reset code…");
+    try {
+      const response = await fetch("/api/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: resetEmail }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to send reset code.");
+      setAuthMode("reset-password");
+      setNotice("Reset code sent! Check the server logs for the code.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Failed to send reset code. Try again.");
+    }
+  }
+
+  async function handleResendResetCode() {
+    if (!resetEmail) return;
+    setNotice("Sending new reset code…");
+    try {
+      const response = await fetch("/api/auth/resend-password-reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: resetEmail }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to resend code.");
+      setNotice("New reset code sent!");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Failed to resend code. Try again.");
     }
@@ -642,6 +707,35 @@ function App() {
                       <button className="btn btn-secondary" onClick={handleLogout}>Sign out</button>
                       <button className="btn btn-danger" onClick={() => setShowDeleteConfirm(true)}>Delete account</button>
                     </div>
+                  ) : authMode === "forgot-password" ? (
+                    <form onSubmit={handleForgotPassword} className="auth-form">
+                      <h3>Forgot password</h3>
+                      <p className="verify-hint">Enter your email to receive a 6-digit reset code.</p>
+                      <div className="form-field">
+                        <label htmlFor="reset-email">Email</label>
+                        <input id="reset-email" name="email" type="email" autoComplete="email" required placeholder="you@example.com" value={resetEmail} onChange={(e) => setResetEmail(e.target.value.toLowerCase())} />
+                      </div>
+                      <button type="submit" className="btn btn-primary">Send reset code</button>
+                      <button type="button" className="btn btn-ghost" onClick={() => setAuthMode("login")}>Cancel</button>
+                    </form>
+                  ) : authMode === "reset-password" ? (
+                    <form onSubmit={handleAuth} className="auth-form">
+                      <h3>Reset password</h3>
+                      <p className="verify-hint">Enter the 6-digit code sent to <strong>{resetEmail}</strong>.</p>
+                      <div className="form-field">
+                        <label htmlFor="reset-code">Reset code</label>
+                        <input id="reset-code" name="code" type="text" inputMode="numeric" pattern="[0-9]*" autoComplete="one-time-code" required placeholder="123456" maxLength={6} />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="new-password">New password</label>
+                        <input id="new-password" name="newPassword" type="password" autoComplete="new-password" required placeholder="••••••••" minLength={6} />
+                      </div>
+                      <button type="submit" className="btn btn-primary">Reset password</button>
+                      <button type="button" className="btn btn-ghost" onClick={() => setAuthMode("login")}>Cancel</button>
+                      <p className="auth-switch">
+                        Didn't receive the code? <button type="button" onClick={handleResendResetCode}>Resend code</button>
+                      </p>
+                    </form>
                   ) : authMode === "verify" ? (
                     <form onSubmit={handleAuth} className="auth-form">
                       <h3>Verify your email</h3>
@@ -669,6 +763,9 @@ function App() {
                       </div>
                       <button type="submit" className="btn btn-primary">{authMode === "register" ? "Create account" : "Sign in"}</button>
                       <button type="button" className="btn btn-ghost" onClick={() => setAuthMode(null)}>Cancel</button>
+                      {authMode === "login" && (
+                        <p className="auth-switch"><button type="button" onClick={() => { setResetEmail(""); setAuthMode("forgot-password"); }}>Forgot password?</button></p>
+                      )}
                       <p className="auth-switch">{authMode === "register" ? "Already have an account? " : "Don't have an account? "}<button type="button" onClick={() => setAuthMode(authMode === "register" ? "login" : "register")}>{authMode === "register" ? "Sign in" : "Create account"}</button></p>
                     </form>
                   ) : (

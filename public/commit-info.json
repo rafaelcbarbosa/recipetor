@@ -1,5 +1,5 @@
 {
-  "hash": "f506ac2",
-  "date": "2026-11-10 12:58:39 -0600",
-  "message": "fix: remove debug logging, fix EMAIL_NOT_VERIFIED frontend handling"
+  "hash": "7ef4d93",
+  "date": "2026-11-10 13:09:57 -0600",
+  "message": "fix: include email in EMAIL_NOT_VERIFIED login response for frontend auto-switch"
 }

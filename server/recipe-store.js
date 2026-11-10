@@ -210,6 +210,18 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     CREATE INDEX IF NOT EXISTS verification_codes_email_idx ON verification_codes(email);
   `);
 
+  // Password reset codes table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS password_reset_codes (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      code TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS password_reset_codes_email_idx ON password_reset_codes(email);
+  `);
+
   const userByEmail = db.prepare("SELECT * FROM users WHERE email = ?");
   const userById = db.prepare("SELECT * FROM users WHERE id = ?");
 
@@ -240,6 +252,13 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
   const deleteVerificationCodeStmt = db.prepare("DELETE FROM verification_codes WHERE email = ? AND code = ?");
   const deleteExpiredVerificationCodesStmt = db.prepare("DELETE FROM verification_codes WHERE expires_at < ?");
   const updateUserEmailVerifiedStmt = db.prepare("UPDATE users SET email_verified = 1 WHERE email = ?");
+
+  // Password reset codes prepared statements
+  const createPasswordResetCodeStmt = db.prepare("INSERT INTO password_reset_codes (id, email, code, expires_at, created_at) VALUES (?, ?, ?, ?, ?)");
+  const getPasswordResetCodeStmt = db.prepare("SELECT * FROM password_reset_codes WHERE email = ? AND code = ? ORDER BY created_at DESC LIMIT 1");
+  const deletePasswordResetCodeStmt = db.prepare("DELETE FROM password_reset_codes WHERE email = ? AND code = ?");
+  const deleteExpiredPasswordResetCodesStmt = db.prepare("DELETE FROM password_reset_codes WHERE expires_at < ?");
+  const updateUserPasswordStmt = db.prepare("UPDATE users SET password_hash = ?, salt = ? WHERE email = ?");
 
   function createUser(email, password) {
     const existing = userByEmail.get(email);
@@ -334,9 +353,78 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     console.log(`=== END VERIFICATION CODE ===\n`);
     
     return { success: true, message: "Verification code sent" };
-  }
+    }
 
-  function createExtractionJob(url, userId) {
+    function createPasswordResetCode(email) {
+      const user = userByEmail.get(email);
+      if (!user) return { success: false, message: "User not found" };
+
+      // Clean up expired codes
+      const now = new Date().toISOString();
+      deleteExpiredPasswordResetCodesStmt.run(now);
+
+      // Generate new code
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const codeId = randomUUID();
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 minutes
+      createPasswordResetCodeStmt.run(codeId, email, code, expiresAt, now);
+
+      console.log(`\n=== PASSWORD RESET CODE for ${email} ===`);
+      console.log(`Code: ${code}`);
+      console.log(`Expires: ${expiresAt}`);
+      console.log(`=== END PASSWORD RESET CODE ===\n`);
+
+      return { success: true, message: "Password reset code sent" };
+    }
+
+    function verifyPasswordResetCode(email, code, newPassword) {
+      // Clean up expired codes
+      const now = new Date().toISOString();
+      deleteExpiredPasswordResetCodesStmt.run(now);
+
+      const record = getPasswordResetCodeStmt.get(email, code);
+      if (!record) return { success: false, message: "Invalid or expired reset code" };
+
+      // Check if code is expired
+      if (new Date(record.expires_at) < new Date()) {
+        deletePasswordResetCodeStmt.run(email, code);
+        return { success: false, message: "Reset code has expired" };
+      }
+
+      // Update password
+      const salt = generateSalt();
+      const passwordHash = hashPassword(newPassword, salt);
+      updateUserPasswordStmt.run(passwordHash, salt, email);
+
+      // Delete used code
+      deletePasswordResetCodeStmt.run(email, code);
+
+      return { success: true, message: "Password reset successfully" };
+    }
+
+    function resendPasswordResetCode(email) {
+      const user = userByEmail.get(email);
+      if (!user) return { success: false, message: "User not found" };
+
+      // Clean up expired codes
+      const now = new Date().toISOString();
+      deleteExpiredPasswordResetCodesStmt.run(now);
+
+      // Generate new code
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const codeId = randomUUID();
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+      createPasswordResetCodeStmt.run(codeId, email, code, expiresAt, now);
+
+      console.log(`\n=== PASSWORD RESET CODE for ${email} (RESENT) ===`);
+      console.log(`Code: ${code}`);
+      console.log(`Expires: ${expiresAt}`);
+      console.log(`=== END PASSWORD RESET CODE ===\n`);
+
+      return { success: true, message: "Password reset code sent" };
+    }
+
+    function createExtractionJob(url, userId) {
     const id = randomUUID();
     const now = new Date().toISOString();
     db.prepare(
@@ -624,6 +712,10 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     deleteUser,
     verifyEmailCode,
     resendVerificationCode,
+    // Password reset
+    createPasswordResetCode,
+    verifyPasswordResetCode,
+    resendPasswordResetCode,
     deleteRecipe,
     getBySource,
     getRecipe,

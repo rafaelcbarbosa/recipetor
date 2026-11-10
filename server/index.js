@@ -303,6 +303,36 @@ export function createServer({
       if (!result.success) return jsonResponse(response, 400, { error: result.message });
       return jsonResponse(response, 200, { message: result.message });
     }
+    if (pathname === "/api/auth/forgot-password" && request.method === "POST") {
+      checkSameOrigin(request);
+      const body = await readJson(request);
+      const email = body?.email?.toString().trim().toLowerCase();
+      if (!email || !email.includes("@")) return jsonResponse(response, 400, { error: "Valid email required." });
+      const result = store.createPasswordResetCode(email);
+      if (!result.success) return jsonResponse(response, 400, { error: result.message });
+      return jsonResponse(response, 200, { message: result.message });
+    }
+    if (pathname === "/api/auth/reset-password" && request.method === "POST") {
+      checkSameOrigin(request);
+      const body = await readJson(request);
+      const email = body?.email?.toString().trim().toLowerCase();
+      const code = body?.code?.toString().trim();
+      const newPassword = body?.newPassword?.toString();
+      if (!email || !code || !newPassword) return jsonResponse(response, 400, { error: "Email, code, and new password required." });
+      if (newPassword.length < 6) return jsonResponse(response, 400, { error: "Password must be at least 6 characters." });
+      const result = store.verifyPasswordResetCode(email, code, newPassword);
+      if (!result.success) return jsonResponse(response, 400, { error: result.message });
+      return jsonResponse(response, 200, { message: result.message });
+    }
+    if (pathname === "/api/auth/resend-password-reset" && request.method === "POST") {
+      checkSameOrigin(request);
+      const body = await readJson(request);
+      const email = body?.email?.toString().trim().toLowerCase();
+      if (!email) return jsonResponse(response, 400, { error: "Email required." });
+      const result = store.resendPasswordResetCode(email);
+      if (!result.success) return jsonResponse(response, 400, { error: result.message });
+      return jsonResponse(response, 200, { message: result.message });
+    }
     if (pathname === "/api/auth/login" && request.method === "POST") {
       checkSameOrigin(request);
       const body = await readJson(request);
