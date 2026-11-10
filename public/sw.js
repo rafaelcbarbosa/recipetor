@@ -1,5 +1,5 @@
-const CACHE_NAME = "recipetor-shell-v1";
-const APP_SHELL = ["/", "/manifest.webmanifest", "/recipetor.svg"];
+const CACHE_NAME = "recipetor-shell-d2a130e";
+const APP_SHELL = ["/", "/manifest.webmanifest", "/recipetor.svg", "/commit-info.json"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -37,6 +37,46 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  // Network-first for navigation (HTML) - always check for updates
+  if (request.mode === "navigate") {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            const copy = response.clone();
+            void caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          }
+          return response;
+        })
+        .catch(async () => {
+          const cached = await caches.match(request);
+          if (cached) return cached;
+          const appShell = await caches.match("/");
+          if (appShell) return appShell;
+          throw new Error("The requested resource is unavailable offline.");
+        }),
+    );
+    return;
+  }
+
+  // Cache-first for assets (JS, CSS, images) - they have hashes in filenames
+  if (url.pathname.startsWith("/assets/")) {
+    event.respondWith(
+      caches.match(request).then((cached) => {
+        if (cached) return cached;
+        return fetch(request).then((response) => {
+          if (response.ok) {
+            const copy = response.clone();
+            void caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          }
+          return response;
+        });
+      }),
+    );
+    return;
+  }
+
+  // Default: network-first for everything else
   event.respondWith(
     fetch(request)
       .then((response) => {
@@ -49,10 +89,6 @@ self.addEventListener("fetch", (event) => {
       .catch(async () => {
         const cached = await caches.match(request);
         if (cached) return cached;
-        if (request.mode === "navigate") {
-          const appShell = await caches.match("/");
-          if (appShell) return appShell;
-        }
         throw new Error("The requested resource is unavailable offline.");
       }),
   );

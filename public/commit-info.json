@@ -1,5 +1,5 @@
 {
-  "hash": "105d324",
-  "date": "2026-11-09 21:44:21 -0600",
-  "message": "Add listExtractionJobs export to recipe-store"
+  "hash": "d2a130e",
+  "date": "2026-11-09 21:50:44 -0600",
+  "message": "Fix ingredient amount validation (allow null), increase Hermes timeout to 5 minutes"
 }
