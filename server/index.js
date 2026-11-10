@@ -372,6 +372,41 @@ export function createServer({
       return jsonResponse(response, 200, { ok: true });
     }
 
+    // Favorites endpoints
+    if (pathname === "/api/favorites" && request.method === "GET") {
+      const userId = extractUserId(request);
+      if (!userId) return jsonResponse(response, 401, { error: "Authentication required." });
+      const favoriteIds = store.listFavorites(userId);
+      return jsonResponse(response, 200, { favorites: favoriteIds });
+    }
+
+    if (pathname === "/api/favorites" && request.method === "POST") {
+      const userId = extractUserId(request);
+      if (!userId) return jsonResponse(response, 401, { error: "Authentication required." });
+      const body = await parseBody(request);
+      const { recipeId } = body;
+      if (!recipeId) return jsonResponse(response, 400, { error: "recipeId is required." });
+      const added = store.addFavorite(userId, recipeId);
+      return jsonResponse(response, 200, { added, recipeId });
+    }
+
+    const favoriteDeleteMatch = pathname.match(/^\/api\/favorites\/([^/]+)$/);
+    if (favoriteDeleteMatch && request.method === "DELETE") {
+      const userId = extractUserId(request);
+      if (!userId) return jsonResponse(response, 401, { error: "Authentication required." });
+      const recipeId = favoriteDeleteMatch[1];
+      store.removeFavorite(userId, recipeId);
+      return jsonResponse(response, 200, { ok: true, recipeId });
+    }
+
+    // History endpoint
+    if (pathname === "/api/history" && request.method === "GET") {
+      const userId = extractUserId(request);
+      if (!userId) return jsonResponse(response, 401, { error: "Authentication required." });
+      const history = store.getUserHistory(userId);
+      return jsonResponse(response, 200, { history });
+    }
+
     if (pathname.startsWith("/api/")) {
       return jsonResponse(response, 404, { error: "API endpoint not found." });
     }

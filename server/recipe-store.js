@@ -169,12 +169,47 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     CREATE INDEX IF NOT EXISTS extraction_jobs_status_idx ON extraction_jobs(status);
   `);
 
+  // Favorites and history tables
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS favorites (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, recipe_id)
+    );
+    CREATE TABLE IF NOT EXISTS user_recipe_history (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+      action TEXT NOT NULL CHECK (action IN ('added', 'updated')),
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS user_recipe_history_user_id_idx ON user_recipe_history(user_id);
+    CREATE INDEX IF NOT EXISTS user_recipe_history_recipe_id_idx ON user_recipe_history(recipe_id);
+  `);
+
   const userByEmail = db.prepare("SELECT * FROM users WHERE email = ?");
   const userById = db.prepare("SELECT * FROM users WHERE id = ?");
 
   const jobById = db.prepare("SELECT * FROM extraction_jobs WHERE id = ?");
   const jobByUrl = db.prepare("SELECT * FROM extraction_jobs WHERE url = ? ORDER BY created_at DESC LIMIT 1");
   const jobsByUrl = db.prepare("SELECT * FROM extraction_jobs WHERE url = ? ORDER BY created_at DESC");
+
+  // Favorites prepared statements
+  const favoritesByUser = db.prepare("SELECT recipe_id FROM favorites WHERE user_id = ? ORDER BY created_at DESC");
+  const favoriteByUserAndRecipe = db.prepare("SELECT * FROM favorites WHERE user_id = ? AND recipe_id = ?");
+  const addFavoriteStmt = db.prepare("INSERT INTO favorites (user_id, recipe_id, created_at) VALUES (?, ?, ?)");
+  const removeFavoriteStmt = db.prepare("DELETE FROM favorites WHERE user_id = ? AND recipe_id = ?");
+
+  // History prepared statements
+  const historyByUser = db.prepare(`
+    SELECT h.*, r.title, r.description, r.category, r.prep_time_minutes, r.base_portions, r.emoji, r.color,
+           r.ingredients_json, r.steps_json, r.totals_json
+    FROM user_recipe_history h
+    JOIN recipes r ON h.recipe_id = r.id
+    WHERE h.user_id = ?
+    ORDER BY h.created_at DESC
+  `);
+  const addHistoryStmt = db.prepare("INSERT INTO user_recipe_history (user_id, recipe_id, action, created_at) VALUES (?, ?, ?, ?)");
 
   function createUser(email, password) {
     const existing = userByEmail.get(email);
@@ -301,6 +336,57 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     db.prepare(`UPDATE extraction_jobs SET ${fields.join(", ")} WHERE id = ?`).run(...params);
   }
 
+  // Favorites functions
+  function listFavorites(userId) {
+    const rows = favoritesByUser.all(userId);
+    return rows.map(({ recipe_id }) => recipe_id);
+  }
+
+  function isFavorite(userId, recipeId) {
+    return !!favoriteByUserAndRecipe.get(userId, recipeId);
+  }
+
+  function addFavorite(userId, recipeId) {
+    const now = new Date().toISOString();
+    try {
+      addFavoriteStmt.run(userId, recipeId, now);
+      return true;
+    } catch (error) {
+      // Ignore duplicate key errors (already a favorite)
+      if (error.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') return false;
+      throw error;
+    }
+  }
+
+  function removeFavorite(userId, recipeId) {
+    removeFavoriteStmt.run(userId, recipeId);
+  }
+
+  // History functions
+  function addToHistory(userId, recipeId, action) {
+    const now = new Date().toISOString();
+    addHistoryStmt.run(userId, recipeId, action, now);
+  }
+
+  function getUserHistory(userId) {
+    const rows = historyByUser.all(userId);
+    return rows.map((row) => ({
+      id: row.recipe_id,
+      title: row.title,
+      description: row.description,
+      category: row.category,
+      prepTimeMinutes: row.prep_time_minutes,
+      basePortions: row.base_portions,
+      emoji: row.emoji,
+      color: row.color,
+      ingredients: JSON.parse(row.ingredients_json),
+      steps: JSON.parse(row.steps_json),
+      totals: row.totals_json ? JSON.parse(row.totals_json) : null,
+      action: row.action,
+      createdAt: row.created_at,
+    }));
+  }
+
   const recipeById = db.prepare("SELECT * FROM recipes WHERE id = ?");
   const sourcesByRecipe = db.prepare(
     "SELECT url FROM recipe_sources WHERE recipe_id = ? ORDER BY created_at ASC",
@@ -420,6 +506,13 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
       db.prepare("INSERT INTO recipe_sources (url, recipe_id, created_at) VALUES (?, ?, ?)")
         .run(url, id, now);
       const saved = getRecipe(id);
+      
+      // Auto-favorite and add to history for the user who added the recipe
+      if (userId) {
+        addFavorite(userId, id);
+        addToHistory(userId, id, 'added');
+      }
+      
       db.exec("COMMIT");
       return { recipe: saved, duplicate: false, reason: "new" };
     } catch (error) {
@@ -445,5 +538,13 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     getExtractionJobsByUrl,
     listExtractionJobs,
     updateExtractionJob,
+    // Favorites
+    listFavorites,
+    isFavorite,
+    addFavorite,
+    removeFavorite,
+    // History
+    getUserHistory,
+    addToHistory,
   };
 }

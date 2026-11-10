@@ -154,7 +154,6 @@ function Icon({ name, size = 18 }: { name: string; size?: number }) {
 function App() {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("All recipes");
-  const [favorites, setFavorites] = useState<string[]>([]);
   const [showFavorites, setShowFavorites] = useState(false);
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
   const [instagramLink, setInstagramLink] = useState("");
@@ -178,6 +177,9 @@ function App() {
   const [authMode, setAuthMode] = useState<"login" | "register" | null>(null);
   const [showQueue, setShowQueue] = useState(false);
   const [queueJobs, setQueueJobs] = useState<Array<{ id: string; url: string; status: string; stage: string; progress: number; errorMessage?: string; recipeId?: string; createdBy: string | null; createdAt: string }>>([]);
+  const [favorites, setFavorites] = useState<string[]>([]);
+  const [history, setHistory] = useState<Array<Recipe & { action: string; createdAt: string }>>([]);
+  const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
     fetch("/commit-info.json")
@@ -200,11 +202,26 @@ function App() {
       if (response.ok) {
         const data = await response.json();
         setUser(data.user);
+        // Fetch favorites and history for the user
+        const [favRes, histRes] = await Promise.all([
+          fetch("/api/favorites", { headers: { Authorization: `Bearer ${token}` } }),
+          fetch("/api/history", { headers: { Authorization: `Bearer ${token}` } }),
+        ]);
+        if (favRes.ok) {
+          const favData = await favRes.json();
+          setFavorites(favData.favorites || []);
+        }
+        if (histRes.ok) {
+          const histData = await histRes.json();
+          setHistory(histData.history || []);
+        }
         return;
       }
     } catch {}
     setToken(null);
     setUser(null);
+    setFavorites([]);
+    setHistory([]);
   }
 
   useEffect(() => {
@@ -247,7 +264,8 @@ function App() {
     const matchesCategory = category === "All recipes" || recipe.category === category;
     const matchesQuery = `${recipe.title} ${recipe.category} ${recipe.source}`.toLowerCase().includes(query.toLowerCase());
     const matchesFavorites = !showFavorites || favorites.includes(recipe.id);
-    return matchesCategory && matchesQuery && matchesFavorites;
+    const matchesHistory = !showHistory || history.some((h) => h.id === recipe.id);
+    return matchesCategory && matchesQuery && matchesFavorites && matchesHistory;
   });
 
   async function apiFetch(path: string, options: RequestInit = {}) {
@@ -291,6 +309,20 @@ function App() {
       setUser(data.user);
       setAuthMode(null);
       setNotice(authMode === "register" ? "Account created! Welcome to Recipetor." : "Welcome back!");
+      // Fetch favorites and history
+      const [favRes, histRes] = await Promise.all([
+        fetch("/api/favorites", { headers: { Authorization: `Bearer ${data.token}` } }),
+        fetch("/api/history", { headers: { Authorization: `Bearer ${data.token}` } }),
+      ]);
+      if (favRes.ok) {
+        const favData = await favRes.json();
+        setFavorites(favData.favorites || []);
+      }
+      if (histRes.ok) {
+        const histData = await histRes.json();
+        setHistory(histData.history || []);
+      }
+      // Refresh saved recipes
       await apiFetch("/api/recipes").then(async (response) => {
         if (response.ok) {
           const data = await response.json();
@@ -306,6 +338,8 @@ function App() {
     setToken(null);
     setUser(null);
     setSavedRecipes([]);
+    setFavorites([]);
+    setHistory([]);
     setNotice("Signed out.");
   }
 
@@ -361,6 +395,15 @@ function App() {
                   importedRecipe,
                   ...current.filter((recipe) => recipe.id !== importedRecipe.id),
                 ]);
+                // Auto-add to favorites and history if user is logged in
+                if (user) {
+                  try {
+                    await apiFetch("/api/favorites", { method: "POST", body: JSON.stringify({ recipeId: importedRecipe.id }) });
+                    setFavorites((current) => current.includes(importedRecipe.id) ? current : [...current, importedRecipe.id]);
+                    await apiFetch("/api/history", { method: "POST", body: JSON.stringify({ recipeId: importedRecipe.id, action: "added" }) });
+                    setHistory((current) => [{ ...importedRecipe, action: "added", createdAt: new Date().toISOString() }, ...current]);
+                  } catch {}
+                }
                 setSelectedRecipe(importedRecipe);
                 setIngredientUnits({});
                 setPortions(importedRecipe.basePortions ?? null);
@@ -414,6 +457,15 @@ function App() {
           if (recipeResponse.ok) {
             const recipe = await recipeResponse.json();
             setSavedRecipes((current) => [recipe, ...current.filter((r) => r.id !== recipe.id)]);
+            // Auto-add to favorites and history if user is logged in
+            if (user) {
+              try {
+                await apiFetch("/api/favorites", { method: "POST", body: JSON.stringify({ recipeId: recipe.id }) });
+                setFavorites((current) => current.includes(recipe.id) ? current : [...current, recipe.id]);
+                await apiFetch("/api/history", { method: "POST", body: JSON.stringify({ recipeId: recipe.id, action: "added" }) });
+                setHistory((current) => [{ ...recipe, action: "added", createdAt: new Date().toISOString() }, ...current]);
+              } catch {}
+            }
             setSelectedRecipe(recipe);
             setIngredientUnits({});
             setPortions(recipe.basePortions ?? null);
@@ -464,8 +516,28 @@ function App() {
     }
   }
 
-  function toggleFavorite(id: string) {
-    setFavorites((current) => current.includes(id) ? current.filter((favorite) => favorite !== id) : [...current, id]);
+  async function toggleFavorite(id: string) {
+    if (!user) {
+      setNotice("Please sign in to manage favorites.");
+      return;
+    }
+    const isFav = favorites.includes(id);
+    try {
+      if (isFav) {
+        const response = await apiFetch(`/api/favorites/${id}`, { method: "DELETE" });
+        if (!response.ok) throw new Error("Failed to remove favorite.");
+      } else {
+        const response = await apiFetch("/api/favorites", {
+          method: "POST",
+          body: JSON.stringify({ recipeId: id }),
+        });
+        if (!response.ok) throw new Error("Failed to add favorite.");
+      }
+      // Update local state
+      setFavorites((current) => current.includes(id) ? current.filter((f) => f !== id) : [...current, id]);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not update favorite.");
+    }
   }
 
   async function deleteRecipe(id: string) {
@@ -535,13 +607,18 @@ function App() {
         </a>
         <div className="sidebar-label">YOUR KITCHEN</div>
         <nav className="side-nav" aria-label="Main navigation">
-          <button className={`nav-item ${!showFavorites ? "active" : ""}`} onClick={() => setShowFavorites(false)}>
+          <button className={`nav-item ${!showFavorites && !showHistory ? "active" : ""}`} onClick={() => { setShowFavorites(false); setShowHistory(false); }}>
             <Icon name="grid" /> <span>My recipes</span><span className="nav-count">{allRecipes.length}</span>
           </button>
-          <button className={`nav-item ${showFavorites ? "active" : ""}`} onClick={() => setShowFavorites(true)}>
+          <button className={`nav-item ${showFavorites ? "active" : ""}`} onClick={() => { setShowFavorites(true); setShowHistory(false); }}>
             <Icon name="bookmark" /> <span>Favorites</span>
           </button>
-          <button className="nav-item" onClick={() => { setShowFavorites(false); setCategory("All recipes"); }}>
+          {user && (
+            <button className={`nav-item ${showHistory ? "active" : ""}`} onClick={() => { setShowHistory(true); setShowFavorites(false); }}>
+              <Icon name="history" /> <span>History</span>
+            </button>
+          )}
+          <button className="nav-item" onClick={() => { setShowFavorites(false); setShowHistory(false); setCategory("All recipes"); }}>
             <Icon name="collection" /> <span>All collections</span>
           </button>
         </nav>
@@ -638,15 +715,15 @@ function App() {
 
         <div className="content-wrap">
           <div className="topline">
-            <div className="breadcrumb"><span>Your kitchen</span><span className="breadcrumb-separator">/</span><strong>{showFavorites ? "Favorites" : "Recipe box"}</strong></div>
+            <div className="breadcrumb"><span>Your kitchen</span><span className="breadcrumb-separator">/</span><strong>{showHistory ? "History" : showFavorites ? "Favorites" : "Recipe box"}</strong></div>
             <span className="free-badge"><span /> Always free</span>
           </div>
 
           <section className="welcome-row">
             <div>
               <p className="eyebrow">A LITTLE INSPIRATION, SAVED</p>
-              <h1>{showFavorites ? "Your favorites" : "Your recipe box"}</h1>
-              <p className="welcome-copy">Good food deserves a place you can find it again.</p>
+              <h1>{showHistory ? "Your history" : showFavorites ? "Your favorites" : "Your recipe box"}</h1>
+              <p className="welcome-copy">{showHistory ? "Recipes you've added to your collection." : "Good food deserves a place you can find it again."}</p>
             </div>
             <button className="primary-button desktop-add" onClick={() => document.getElementById("instagram-link")?.focus()}><Icon name="plus" /> Add a recipe</button>
           </section>
@@ -733,7 +810,7 @@ function App() {
 
           <section className="library-section" aria-labelledby="library-title">
             <div className="library-heading">
-              <div><h2 id="library-title">{showFavorites ? "Saved favorites" : "Your collection"} <span className="recipe-count">{visibleRecipes.length}</span></h2><p>{savedRecipes.length ? "Your imported recipes, all in one place." : "A few examples to get your kitchen started."}</p></div>
+              <div><h2 id="library-title">{showHistory ? "History" : showFavorites ? "Saved favorites" : "Your collection"} <span className="recipe-count">{visibleRecipes.length}</span></h2><p>{showHistory ? "Recipes you've added, in order added." : savedRecipes.length ? "Your imported recipes, all in one place." : "A few examples to get your kitchen started."}</p></div>
               <label className="search-box">
                 <Icon name="search" size={18} />
                 <span className="sr-only">Search recipes</span>
@@ -766,8 +843,8 @@ function App() {
                   </div>
                 </article>
               ))}
-            </div> : <div className="empty-state"><span className="empty-icon"><Icon name={showFavorites ? "bookmark" : "search"} size={22} /></span><h3>{showFavorites ? "No favorites yet" : "No recipes found"}</h3><p>{showFavorites ? "Tap the bookmark on a recipe to keep it close." : "Try another search or choose a different category."}</p></div>}
-            <p className="sample-note">{savedRecipes.length ? "Add another Instagram recipe whenever inspiration strikes." : "These example recipes are here to help you explore."}</p>
+            </div> : <div className="empty-state"><span className="empty-icon"><Icon name={showHistory ? "history" : showFavorites ? "bookmark" : "search"} size={22} /></span><h3>{showHistory ? "No history yet" : showFavorites ? "No favorites yet" : "No recipes found"}</h3><p>{showHistory ? "Recipes you add will appear here." : showFavorites ? "Tap the bookmark on a recipe to keep it close." : "Try another search or choose a different category."}</p></div>}
+            <p className="sample-note">{showHistory ? "Your recipe journey starts with the first import." : savedRecipes.length ? "Add another Instagram recipe whenever inspiration strikes." : "These example recipes are here to help you explore."}</p>
           </section>
           <footer className="page-footer">
             <span>Made for the recipes you want to make.</span>
@@ -785,8 +862,9 @@ function App() {
         </div>
 
         <nav className="mobile-nav" aria-label="Mobile navigation">
-          <button className={!showFavorites ? "selected" : ""} onClick={() => setShowFavorites(false)}><Icon name="grid" /><span>Recipes</span></button>
-          <button className={showFavorites ? "selected" : ""} onClick={() => setShowFavorites(true)}><Icon name="bookmark" /><span>Favorites</span></button>
+          <button className={!showFavorites && !showHistory ? "selected" : ""} onClick={() => { setShowFavorites(false); setShowHistory(false); }}><Icon name="grid" /><span>Recipes</span></button>
+          <button className={showFavorites ? "selected" : ""} onClick={() => { setShowFavorites(true); setShowHistory(false); }}><Icon name="bookmark" /><span>Favorites</span></button>
+          {user && <button className={showHistory ? "selected" : ""} onClick={() => { setShowHistory(true); setShowFavorites(false); }}><Icon name="history" /><span>History</span></button>}
           <button onClick={() => document.getElementById("instagram-link")?.focus()}><Icon name="plus" /><span>Add link</span></button>
         </nav>
       </main>

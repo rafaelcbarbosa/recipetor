@@ -1,5 +1,5 @@
 {
-  "hash": "b6245e6",
-  "date": "2026-11-09 22:22:13 -0600",
-  "message": "Fix runtime error: guard against undefined ingredients in recipe modal"
+  "hash": "1aea7e8",
+  "date": "2026-11-09 22:36:03 -0600",
+  "message": "Fix steps.map runtime error; improve Hermes prompt for better quantity extraction"
 }
