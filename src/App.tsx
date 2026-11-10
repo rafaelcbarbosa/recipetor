@@ -108,7 +108,8 @@ function App() {
   const [ingredientUnits, setIngredientUnits] = useState<Record<number, string>>({});
   const [user, setUser] = useState<{ id: string; email: string } | null>(null);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem("recipetor_token"));
-  const [authMode, setAuthMode] = useState<"login" | "register" | null>(null);
+  const [authMode, setAuthMode] = useState<"login" | "register" | "verify" | null>(null);
+  const [verifyEmail, setVerifyEmail] = useState<string>("");
   const [showQueue, setShowQueue] = useState(false);
   const [queueJobs, setQueueJobs] = useState<Array<{ id: string; url: string; status: string; stage: string; progress: number; errorMessage?: string; recipeId?: string; createdBy: string | null; createdAt: string }>>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -225,6 +226,31 @@ function App() {
     const formData = new FormData(event.currentTarget);
     const email = formData.get("email")?.toString().trim().toLowerCase();
     const password = formData.get("password")?.toString();
+    const code = formData.get("code")?.toString().trim();
+    
+    if (authMode === "verify") {
+      if (!verifyEmail || !code) {
+        setNotice("Email and verification code are required.");
+        return;
+      }
+      setNotice("Verifying email…");
+      try {
+        const response = await fetch("/api/auth/verify-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: verifyEmail, code }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Verification failed.");
+        setNotice("Email verified! You can now sign in.");
+        setAuthMode("login");
+        return;
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : "Verification failed. Try again.");
+        return;
+      }
+    }
+    
     if (!email || !password) {
       setNotice("Email and password are required.");
       return;
@@ -238,7 +264,16 @@ function App() {
         body: JSON.stringify({ email, password }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Authentication failed.");
+      if (!response.ok) {
+        if (data.requiresVerification && data.user?.email) {
+          setVerifyEmail(data.user.email);
+          setAuthMode("verify");
+          setNotice(data.message || "Please check your email for a verification code.");
+        } else {
+          throw new Error(data.error || "Authentication failed.");
+        }
+        return;
+      }
       setToken(data.token);
       setUser(data.user);
       setAuthMode(null);
@@ -265,6 +300,23 @@ function App() {
       });
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Authentication failed. Try again.");
+    }
+  }
+
+  async function handleResendVerification() {
+    if (!verifyEmail) return;
+    setNotice("Sending new code…");
+    try {
+      const response = await fetch("/api/auth/resend-verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: verifyEmail }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to resend code.");
+      setNotice("New verification code sent!");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Failed to resend code. Try again.");
     }
   }
 
@@ -565,6 +617,20 @@ function App() {
                       </div>
                       <button className="btn btn-secondary" onClick={handleLogout}>Sign out</button>
                     </div>
+                  ) : authMode === "verify" ? (
+                    <form onSubmit={handleAuth} className="auth-form">
+                      <h3>Verify your email</h3>
+                      <p className="verify-hint">A 6-digit code has been sent to <strong>{verifyEmail}</strong>.</p>
+                      <div className="form-field">
+                        <label htmlFor="auth-code">Verification code</label>
+                        <input id="auth-code" name="code" type="text" inputMode="numeric" pattern="[0-9]*" autoComplete="one-time-code" required placeholder="123456" maxLength={6} />
+                      </div>
+                      <button type="submit" className="btn btn-primary">Verify</button>
+                      <button type="button" className="btn btn-ghost" onClick={() => setAuthMode(null)}>Cancel</button>
+                      <p className="auth-switch">
+                        Didn't receive the code? <button type="button" onClick={handleResendVerification}>Resend code</button>
+                      </p>
+                    </form>
                   ) : authMode ? (
                     <form onSubmit={handleAuth} className="auth-form">
                       <h3>{authMode === "register" ? "Create account" : "Sign in"}</h3>

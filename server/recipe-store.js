@@ -97,6 +97,7 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
       email TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
       salt TEXT NOT NULL,
+      email_verified INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS recipes (
@@ -187,6 +188,18 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     CREATE INDEX IF NOT EXISTS user_recipe_history_recipe_id_idx ON user_recipe_history(recipe_id);
   `);
 
+// Email verification codes table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS verification_codes (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      code TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS verification_codes_email_idx ON verification_codes(email);
+  `);
+
   const userByEmail = db.prepare("SELECT * FROM users WHERE email = ?");
   const userById = db.prepare("SELECT * FROM users WHERE id = ?");
 
@@ -211,6 +224,13 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
   `);
   const addHistoryStmt = db.prepare("INSERT INTO user_recipe_history (user_id, recipe_id, action, created_at) VALUES (?, ?, ?, ?)");
 
+  // Verification codes prepared statements
+  const createVerificationCodeStmt = db.prepare("INSERT INTO verification_codes (id, email, code, expires_at, created_at) VALUES (?, ?, ?, ?, ?)");
+  const getVerificationCodeStmt = db.prepare("SELECT * FROM verification_codes WHERE email = ? AND code = ? ORDER BY created_at DESC LIMIT 1");
+  const deleteVerificationCodeStmt = db.prepare("DELETE FROM verification_codes WHERE email = ? AND code = ?");
+  const deleteExpiredVerificationCodesStmt = db.prepare("DELETE FROM verification_codes WHERE expires_at < ?");
+  const updateUserEmailVerifiedStmt = db.prepare("UPDATE users SET email_verified = 1 WHERE email = ?");
+
   function createUser(email, password) {
     const existing = userByEmail.get(email);
     if (existing) throw new Error("Email already registered");
@@ -218,8 +238,21 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     const salt = generateSalt();
     const passwordHash = hashPassword(password, salt);
     const now = new Date().toISOString();
-    db.prepare("INSERT INTO users (id, email, password_hash, salt, created_at) VALUES (?, ?, ?, ?, ?)")
+    db.prepare("INSERT INTO users (id, email, password_hash, salt, email_verified, created_at) VALUES (?, ?, ?, ?, 0, ?)")
       .run(id, email, passwordHash, salt, now);
+    
+    // Generate verification code
+    const code = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit code
+    const codeId = randomUUID();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 minutes
+    createVerificationCodeStmt.run(codeId, email, code, expiresAt, now);
+    
+    // Log the code for development (no SMTP server)
+    console.log(`\n=== EMAIL VERIFICATION CODE for ${email} ===`);
+    console.log(`Code: ${code}`);
+    console.log(`Expires: ${expiresAt}`);
+    console.log(`=== END VERIFICATION CODE ===\n`);
+    
     return { id, email, createdAt: now };
   }
 
@@ -239,7 +272,52 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     const row = userByEmail.get(email);
     if (!row) return null;
     if (!verifyPassword(password, row.salt, row.password_hash)) return null;
+    if (!row.email_verified) return { error: "EMAIL_NOT_VERIFIED", message: "Please verify your email before logging in" };
     return { id: row.id, email: row.email, createdAt: row.created_at };
+  }
+
+  function verifyEmailCode(email, code) {
+    // Clean up expired codes
+    const now = new Date().toISOString();
+    deleteExpiredVerificationCodesStmt.run(now);
+    
+    const record = getVerificationCodeStmt.get(email, code);
+    if (!record) return { success: false, message: "Invalid or expired verification code" };
+    
+    // Check if code is expired
+    if (new Date(record.expires_at) < new Date()) {
+      deleteVerificationCodeStmt.run(email, code);
+      return { success: false, message: "Verification code has expired" };
+    }
+    
+    // Mark user as verified
+    updateUserEmailVerifiedStmt.run(email);
+    deleteVerificationCodeStmt.run(email, code);
+    
+    return { success: true, message: "Email verified successfully" };
+  }
+
+  function resendVerificationCode(email) {
+    const user = userByEmail.get(email);
+    if (!user) return { success: false, message: "User not found" };
+    if (user.email_verified) return { success: false, message: "Email already verified" };
+    
+    // Clean up expired codes
+    const now = new Date().toISOString();
+    deleteExpiredVerificationCodesStmt.run(now);
+    
+    // Generate new code
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const codeId = randomUUID();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    createVerificationCodeStmt.run(codeId, email, code, expiresAt, now);
+    
+    console.log(`\n=== EMAIL VERIFICATION CODE for ${email} (RESENT) ===`);
+    console.log(`Code: ${code}`);
+    console.log(`Expires: ${expiresAt}`);
+    console.log(`=== END VERIFICATION CODE ===\n`);
+    
+    return { success: true, message: "Verification code sent" };
   }
 
   function createExtractionJob(url, userId) {
@@ -527,6 +605,8 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     getUserByEmail,
     getUserById,
     verifyUser,
+    verifyEmailCode,
+    resendVerificationCode,
     deleteRecipe,
     getBySource,
     getRecipe,

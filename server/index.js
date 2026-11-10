@@ -271,12 +271,35 @@ export function createServer({
       if (!password || password.length < 6) return jsonResponse(response, 400, { error: "Password must be at least 6 characters." });
       try {
         const user = store.createUser(email, password);
-        const token = signJwt({ sub: user.id, email: user.email, exp: Date.now() + JWT_EXPIRY_MS });
-        return jsonResponse(response, 200, { user: { id: user.id, email: user.email }, token });
+        // User created but email not verified - return info about verification
+        return jsonResponse(response, 200, { 
+          user: { id: user.id, email: user.email }, 
+          requiresVerification: true,
+          message: "Account created. Please check your email for a verification code." 
+        });
       } catch (error) {
         if (error.message === "Email already registered") return jsonResponse(response, 409, { error: "Email already registered." });
         throw error;
       }
+    }
+    if (pathname === "/api/auth/verify-email" && request.method === "POST") {
+      checkSameOrigin(request);
+      const body = await readJson(request);
+      const email = body?.email?.toString().trim().toLowerCase();
+      const code = body?.code?.toString().trim();
+      if (!email || !code) return jsonResponse(response, 400, { error: "Email and verification code required." });
+      const result = store.verifyEmailCode(email, code);
+      if (!result.success) return jsonResponse(response, 400, { error: result.message });
+      return jsonResponse(response, 200, { message: result.message });
+    }
+    if (pathname === "/api/auth/resend-verification" && request.method === "POST") {
+      checkSameOrigin(request);
+      const body = await readJson(request);
+      const email = body?.email?.toString().trim().toLowerCase();
+      if (!email) return jsonResponse(response, 400, { error: "Email required." });
+      const result = store.resendVerificationCode(email);
+      if (!result.success) return jsonResponse(response, 400, { error: result.message });
+      return jsonResponse(response, 200, { message: result.message });
     }
     if (pathname === "/api/auth/login" && request.method === "POST") {
       checkSameOrigin(request);
@@ -286,6 +309,9 @@ export function createServer({
       if (!email || !password) return jsonResponse(response, 400, { error: "Email and password required." });
       const user = store.verifyUser(email, password);
       if (!user) return jsonResponse(response, 401, { error: "Invalid email or password." });
+      if (user.error === "EMAIL_NOT_VERIFIED") {
+        return jsonResponse(response, 401, { error: user.message, requiresVerification: true });
+      }
       const token = signJwt({ sub: user.id, email: user.email, exp: Date.now() + JWT_EXPIRY_MS });
       return jsonResponse(response, 200, { user: { id: user.id, email: user.email }, token });
     }
