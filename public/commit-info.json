@@ -1,5 +1,5 @@
 {
-  "hash": "03d479b",
-  "date": "2026-11-10 11:08:05 -0600",
-  "message": "fix: add database migration for email_verified column"
+  "hash": "36fc242",
+  "date": "2026-11-10 11:49:43 -0600",
+  "message": "feat: add account deletion option with confirmation dialog"
 }

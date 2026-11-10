@@ -322,6 +322,10 @@ export function createServer({
       if (!user) return jsonResponse(response, 404, { error: "User not found." });
       return jsonResponse(response, 200, { user: { id: user.id, email: user.email } });
     }
+    // DEBUG: Check JWT secret
+    if (pathname === "/api/debug/jwt-secret" && request.method === "GET") {
+      return jsonResponse(response, 200, { jwtSecret: JWT_SECRET?.slice(0, 8) + "..." });
+    }
     if (pathname === "/api/auth/delete-account" && request.method === "DELETE") {
       const userId = extractUserId(request);
       if (!userId) return jsonResponse(response, 401, { error: "Not authenticated." });
