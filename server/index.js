@@ -46,7 +46,11 @@ function signJwt(payload) {
   const body = base64UrlEncode(JSON.stringify(payload));
   const signatureInput = `${header}.${body}`;
   const signature = createHash("sha256").update(`${signatureInput}.${JWT_SECRET}`).digest();
-  return `${signatureInput}.${base64UrlEncode(signature)}`;
+  const encodedSig = base64UrlEncode(signature);
+  console.log('[signJwt] signatureInput:', signatureInput);
+  console.log('[signJwt] JWT_SECRET:', JWT_SECRET?.slice(0, 8) + '...');
+  console.log('[signJwt] signature (encoded):', encodedSig);
+  return `${signatureInput}.${encodedSig}`;
 }
 
 function verifyJwt(token) {
@@ -55,7 +59,13 @@ function verifyJwt(token) {
     if (!header || !body || !signature) return null;
     const signatureInput = `${header}.${body}`;
     const expectedSignature = createHash("sha256").update(`${signatureInput}.${JWT_SECRET}`).digest();
-    if (base64UrlEncode(expectedSignature) !== signature) return null;
+    const encodedExpected = base64UrlEncode(expectedSignature);
+    console.log('[verifyJwt] signatureInput:', signatureInput);
+    console.log('[verifyJwt] JWT_SECRET:', JWT_SECRET?.slice(0, 8) + '...');
+    console.log('[verifyJwt] expected (encoded):', encodedExpected);
+    console.log('[verifyJwt] actual signature:', signature);
+    console.log('[verifyJwt] match:', encodedExpected === signature);
+    if (encodedExpected !== signature) return null;
     const payload = JSON.parse(base64UrlDecode(body));
     if (payload.exp && payload.exp < Date.now()) return null;
     return payload;
