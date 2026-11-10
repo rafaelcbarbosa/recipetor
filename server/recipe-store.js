@@ -278,6 +278,12 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     return { id: row.id, email: row.email, createdAt: row.created_at };
   }
 
+  function deleteUser(userId) {
+    const stmt = db.prepare("DELETE FROM users WHERE id = ?");
+    const result = stmt.run(userId);
+    return result.changes > 0;
+  }
+
   function verifyUser(email, password) {
     const row = userByEmail.get(email);
     if (!row) return null;
@@ -615,6 +621,7 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     getUserByEmail,
     getUserById,
     verifyUser,
+    deleteUser,
     verifyEmailCode,
     resendVerificationCode,
     deleteRecipe,

@@ -322,6 +322,13 @@ export function createServer({
       if (!user) return jsonResponse(response, 404, { error: "User not found." });
       return jsonResponse(response, 200, { user: { id: user.id, email: user.email } });
     }
+    if (pathname === "/api/auth/delete-account" && request.method === "DELETE") {
+      const userId = extractUserId(request);
+      if (!userId) return jsonResponse(response, 401, { error: "Not authenticated." });
+      const deleted = store.deleteUser(userId);
+      if (!deleted) return jsonResponse(response, 404, { error: "User not found." });
+      return jsonResponse(response, 200, { message: "Account deleted successfully" });
+    }
     if (pathname === "/api/recipes" && request.method === "GET") {
       return jsonResponse(response, 200, { recipes: store.list() });
     }

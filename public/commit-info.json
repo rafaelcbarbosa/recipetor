@@ -1,5 +1,5 @@
 {
-  "hash": "fe6e2a2",
-  "date": "2026-11-10 11:01:29 -0600",
-  "message": "feat: add email verification for new subscriptions"
+  "hash": "03d479b",
+  "date": "2026-11-10 11:08:05 -0600",
+  "message": "fix: add database migration for email_verified column"
 }

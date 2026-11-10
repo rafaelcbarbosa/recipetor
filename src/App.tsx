@@ -115,6 +115,7 @@ function App() {
   const [favorites, setFavorites] = useState<string[]>([]);
   const [history, setHistory] = useState<Array<Recipe & { action: string; createdAt: string }>>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
     fetch("/commit-info.json")
@@ -327,6 +328,29 @@ function App() {
     setFavorites([]);
     setHistory([]);
     setNotice("Signed out.");
+  }
+
+  async function handleDeleteAccount() {
+    if (!token) return;
+    try {
+      const response = await fetch("/api/auth/delete-account", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Failed to delete account");
+      }
+      setToken(null);
+      setUser(null);
+      setSavedRecipes([]);
+      setFavorites([]);
+      setHistory([]);
+      setShowDeleteConfirm(false);
+      setNotice("Account deleted successfully.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Failed to delete account.");
+    }
   }
 
   async function handleImport(event: FormEvent<HTMLFormElement>) {
@@ -616,6 +640,7 @@ function App() {
                         <span className="user-email">{user.email}</span>
                       </div>
                       <button className="btn btn-secondary" onClick={handleLogout}>Sign out</button>
+                      <button className="btn btn-danger" onClick={() => setShowDeleteConfirm(true)}>Delete account</button>
                     </div>
                   ) : authMode === "verify" ? (
                     <form onSubmit={handleAuth} className="auth-form">
@@ -944,6 +969,19 @@ function App() {
           </div>
         </section>
       </div>}
+
+      {showDeleteConfirm && (
+        <div className="modal-overlay" onClick={() => setShowDeleteConfirm(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Delete account</h2>
+            <p>This will permanently delete your account. Your recipes will remain in the shared library but will no longer be linked to your account. Your favorites and history will be deleted. This action cannot be undone.</p>
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => setShowDeleteConfirm(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={handleDeleteAccount}>Delete my account</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
