@@ -1,5 +1,5 @@
 {
-  "hash": "6f00d05",
-  "date": "2026-11-10 07:27:47 -0600",
-  "message": "feat: remove hardcoded recipes, make all recipes available to everyone"
+  "hash": "fe6e2a2",
+  "date": "2026-11-10 11:01:29 -0600",
+  "message": "feat: add email verification for new subscriptions"
 }

@@ -100,6 +100,16 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
       email_verified INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL
     );
+  `);
+
+  // Migration: add email_verified column if it doesn't exist (for existing databases)
+  const userColumns = db.prepare("PRAGMA table_info(users)").all();
+  const hasEmailVerified = userColumns.some((col) => col.name === "email_verified");
+  if (!hasEmailVerified) {
+    db.exec("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0");
+  }
+
+  db.exec(`
     CREATE TABLE IF NOT EXISTS recipes (
       id TEXT PRIMARY KEY,
       user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
