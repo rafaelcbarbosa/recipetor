@@ -1,5 +1,5 @@
 {
-  "hash": "b55ecde",
-  "date": "2026-11-10 12:37:25 -0600",
-  "message": "debug: add JWT sign/verify logging"
+  "hash": "f506ac2",
+  "date": "2026-11-10 12:58:39 -0600",
+  "message": "fix: remove debug logging, fix EMAIL_NOT_VERIFIED frontend handling"
 }

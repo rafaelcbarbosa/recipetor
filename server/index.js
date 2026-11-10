@@ -312,7 +312,7 @@ export function createServer({
       const user = store.verifyUser(email, password);
       if (!user) return jsonResponse(response, 401, { error: "Invalid email or password." });
       if (user.error === "EMAIL_NOT_VERIFIED") {
-        return jsonResponse(response, 401, { error: user.message, requiresVerification: true });
+        return jsonResponse(response, 401, { error: user.message, requiresVerification: true, email });
       }
       const token = signJwt({ sub: user.id, email: user.email, exp: Date.now() + JWT_EXPIRY_MS });
       return jsonResponse(response, 200, { user: { id: user.id, email: user.email }, token });
