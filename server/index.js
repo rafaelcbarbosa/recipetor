@@ -230,8 +230,14 @@ export function createServer({
       return jsonResponse(response, 200, { user: { id: user.id, email: user.email } });
     }
     if (pathname === "/api/recipes" && request.method === "GET") {
-      const userId = extractUserId(request);
-      return jsonResponse(response, 200, { recipes: store.list(userId) });
+      return jsonResponse(response, 200, { recipes: store.list() });
+    }
+    const singleRecipeMatch = pathname.match(/^\/api\/recipes\/([^/]+)$/);
+    if (singleRecipeMatch && request.method === "GET") {
+      const recipeId = singleRecipeMatch[1];
+      const recipe = store.getRecipe(recipeId);
+      if (!recipe) return jsonResponse(response, 404, { error: "Recipe not found." });
+      return jsonResponse(response, 200, { recipe });
     }
     if (pathname === "/api/recipes/import" && request.method === "POST") {
       checkSameOrigin(request);
@@ -239,53 +245,95 @@ export function createServer({
       const url = canonicalizeInstagramUrl(body?.url);
       console.log(`[import] URL: ${url}`);
       const userId = extractUserId(request);
+
+      // Check if recipe already exists
       const existing = store.getBySource(url);
       if (existing) return jsonResponse(response, 200, { recipe: existing, duplicate: true, reason: "source" });
 
-      const pending = inFlight.get(url);
-      if (pending) {
-        const result = await pending;
-        return jsonResponse(response, 200, { ...result, duplicate: true });
+      // Check for existing job for this URL
+      const existingJob = store.getExtractionJobByUrl(url);
+      if (existingJob && existingJob.status !== "completed" && existingJob.status !== "failed") {
+        return jsonResponse(response, 200, {
+          job: existingJob,
+          message: "Recipe extraction already in progress. Check status endpoint for progress.",
+        });
       }
 
-      const key = request.socket.remoteAddress || "unknown";
-      const timestamps = (rateLimits.get(key) || []).filter((timestamp) => now() - timestamp < IMPORT_WINDOW_MS);
-      if (timestamps.length >= IMPORT_LIMIT) {
-        throw new HttpError(429, "Too many recipe imports from this connection. Try again later.");
-      }
-      timestamps.push(now());
-      rateLimits.set(key, timestamps);
-      if (rateLimits.size > 2000) {
-        for (const [client, events] of rateLimits) {
-          if (events.every((timestamp) => now() - timestamp >= IMPORT_WINDOW_MS)) rateLimits.delete(client);
-        }
-      }
+      // Create new extraction job
+      const job = store.createExtractionJob(url, userId);
 
-      const extraction = (async () => {
+      // Start background extraction
+      processExtraction(job.id, url, userId, extractRecipe, store);
+
+      return jsonResponse(response, 202, { job, message: "Extraction started. Poll status endpoint for progress." });
+    }
+
+    // Background extraction handler
+    async function processExtraction(jobId, url, userId, extractRecipe, store) {
+      try {
+        store.updateExtractionJob(jobId, { status: "processing", stage: "fetching", progress: 10 });
+        console.log(`[import] Job ${jobId}: Starting extraction for ${url}`);
+
+        store.updateExtractionJob(jobId, { status: "processing", stage: "extracting", progress: 30 });
         let extracted;
         try {
-          console.log(`[import] Calling Hermes for: ${url}`);
           extracted = await extractRecipe(url);
-          console.log(`[import] Hermes returned, saving recipe`);
         } catch (error) {
-          console.error("Recipe import failed:", error instanceof Error ? error.message : "Unknown error");
-          const reason = error instanceof Error && error.message ? error.message : "Unknown extraction error.";
-          throw new HttpError(502, `Hermes could not extract a recipe: ${reason}`);
+          const errorMsg = error instanceof Error ? error.message : "Unknown extraction error";
+          console.error(`[import] Job ${jobId}: Hermes extraction failed:`, errorMsg);
+          store.updateExtractionJob(jobId, {
+            status: "failed",
+            stage: "failed",
+            progress: 100,
+            errorMessage: `Hermes extraction failed: ${errorMsg}`,
+          });
+          return;
         }
 
+        store.updateExtractionJob(jobId, { status: "processing", stage: "saving", progress: 70 });
+        console.log(`[import] Job ${jobId}: Hermes returned, saving recipe`);
+
         const saved = store.saveImported(url, extracted, userId);
-        console.log(`[import] Recipe saved: ${saved.recipe.id}, duplicate: ${saved.duplicate}`);
-        return {
-          recipe: saved.recipe,
-          duplicate: saved.duplicate,
-          reason: saved.reason,
-        };
-      })();
-      inFlight.set(url, extraction);
+        console.log(`[import] Job ${jobId}: Recipe saved: ${saved.recipe.id}, duplicate: ${saved.duplicate}`);
+
+        store.updateExtractionJob(jobId, {
+          status: "completed",
+          stage: "completed",
+          progress: 100,
+          recipeId: saved.recipe.id,
+        });
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : "Unknown error";
+        console.error(`[import] Job ${jobId}: Failed:`, errorMsg);
+        store.updateExtractionJob(jobId, {
+          status: "failed",
+          stage: "failed",
+          progress: 100,
+          errorMessage: `Extraction failed: ${errorMsg}`,
+        });
+      }
+    }
+
+    // Get extraction job status by job ID
+    if (pathname.match(/^\/api\/recipes\/import\/status\/([^/]+)$/) && request.method === "GET") {
+      const jobId = pathname.match(/^\/api\/recipes\/import\/status\/([^/]+)$/)[1];
+      const job = store.getExtractionJob(jobId);
+      if (!job) return jsonResponse(response, 404, { error: "Job not found." });
+      return jsonResponse(response, 200, { job });
+    }
+
+    // Get extraction job status by URL (latest job for URL)
+    if (pathname === "/api/recipes/import/status/by-url" && request.method === "GET") {
+      const urlSearchParams = new URL(request.url, "http://localhost").searchParams;
+      const url = urlSearchParams.get("url");
+      if (!url) return jsonResponse(response, 400, { error: "URL parameter required." });
       try {
-        return jsonResponse(response, 200, await extraction);
-      } finally {
-        inFlight.delete(url);
+        const canonicalUrl = canonicalizeInstagramUrl(url);
+        const job = store.getExtractionJobByUrl(canonicalUrl);
+        if (!job) return jsonResponse(response, 404, { error: "No extraction job found for this URL." });
+        return jsonResponse(response, 200, { job });
+      } catch {
+        return jsonResponse(response, 400, { error: "Invalid Instagram URL." });
       }
     }
 

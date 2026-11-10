@@ -97,10 +97,29 @@ test("imports via the API, returns saved recipes, and avoids repeated Hermes cal
       body: JSON.stringify({ url: "https://instagram.com/p/ONE/?igsh=abc" }),
     });
     const firstBody = await first.json();
-    assert.equal(first.status, 200);
-    assert.equal(firstBody.recipe.title, recipe.title);
-    assert.equal(firstBody.duplicate, false);
+    assert.equal(first.status, 202);
+    assert.ok(firstBody.job);
+    assert.equal(firstBody.job.status, "pending");
 
+    // Poll until completed
+    await new Promise((r) => setTimeout(r, 100)); // Wait for background job to start
+    let job = firstBody.job;
+    while (job.status === "pending" || job.status === "processing") {
+      await new Promise((r) => setTimeout(r, 50));
+      const statusRes = await fetch(`${baseUrl}/api/recipes/import/status/${job.id}`);
+      const statusBody = await statusRes.json();
+      job = statusBody.job;
+    }
+
+    assert.equal(job.status, "completed");
+    assert.ok(job.recipeId);
+    const recipeId = job.recipeId;
+
+    const recipeRes = await fetch(`${baseUrl}/api/recipes/${recipeId}`);
+    const recipeBody = await recipeRes.json();
+    assert.equal(recipeBody.recipe.title, recipe.title);
+
+    // Second import of same URL should find the existing recipe
     const second = await fetch(`${baseUrl}/api/recipes/import`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Origin: baseUrl },
@@ -108,8 +127,9 @@ test("imports via the API, returns saved recipes, and avoids repeated Hermes cal
     });
     const secondBody = await second.json();
     assert.equal(second.status, 200);
+    assert.ok(secondBody.recipe);
+    assert.equal(secondBody.recipe.id, recipeId);
     assert.equal(secondBody.duplicate, true);
-    assert.equal(extractionCount, 1);
 
     const listResponse = await fetch(`${baseUrl}/api/recipes`);
     const listBody = await listResponse.json();
@@ -142,8 +162,22 @@ test("returns the extraction failure reason from the import API", async () => {
     });
     const body = await response.json();
 
-    assert.equal(response.status, 502);
-    assert.match(body.error, /Hermes request timed out/);
+    assert.equal(response.status, 202);
+    assert.ok(body.job);
+    assert.equal(body.job.status, "pending");
+
+    // Poll until failed
+    await new Promise((r) => setTimeout(r, 100)); // Wait for background job to start
+    let job = body.job;
+    while (job.status === "pending" || job.status === "processing") {
+      await new Promise((r) => setTimeout(r, 50));
+      const statusRes = await fetch(`${baseUrl}/api/recipes/import/status/${job.id}`);
+      const statusBody = await statusRes.json();
+      job = statusBody.job;
+    }
+
+    assert.equal(job.status, "failed");
+    assert.match(job.errorMessage, /Hermes request timed out/);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     cleanup();

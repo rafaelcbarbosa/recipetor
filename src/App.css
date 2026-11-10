@@ -77,6 +77,13 @@ h1 { margin-bottom: 7px; font-family: Georgia, "Times New Roman", serif; font-si
 .server-status > span { width: 6px; height: 6px; background: #d1a96b; }
 .server-ready > span { background: #789477; }
 .server-hermes-missing > span, .server-offline > span { background: #c4664a; }
+
+.import-progress { margin-top: 10px; }
+.progress-bar { height: 4px; border-radius: 2px; background: #ece7df; overflow: hidden; }
+.progress-fill { height: 100%; width: 0%; border-radius: 2px; background: #e56b45; transition: width 0.3s ease; }
+.progress-info { display: flex; justify-content: space-between; margin-top: 6px; font-size: 9px; color: #91897e; }
+.progress-stage { text-transform: capitalize; }
+
 .notice { margin: 10px 0 0; color: #715942; font-size: 11px; line-height: 1.45; }
 .library-section { margin-top: 36px; }
 .library-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; }
@@ -215,6 +222,8 @@ h1 { margin-bottom: 7px; font-family: Georgia, "Times New Roman", serif; font-si
   .import-form input { font-size: 10px; }
   .import-form button { gap: 5px; padding: 0 8px; font-size: 9px; }
   .import-foot { flex-wrap: wrap; gap: 4px 10px; font-size: 8px; }
+  .import-progress { margin-top: 8px; }
+  .progress-info { font-size: 8px; }
   .library-section { margin-top: 29px; }
   .library-heading { align-items: start; flex-direction: column; gap: 13px; }
   .library-heading h2 { font-size: 16px; }

@@ -1,5 +1,5 @@
 {
-  "hash": "c8a8405",
-  "date": "2026-11-08 19:51:22 -0600",
-  "message": "Add DB migration for totals_json, add import logging"
+  "hash": "259ca11",
+  "date": "2026-11-09 17:40:50 -0600",
+  "message": "Update 01-general.md with all implemented features"
 }

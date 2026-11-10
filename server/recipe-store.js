@@ -151,8 +151,30 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     console.error("Migration check failed:", error instanceof Error ? error.message : "Unknown error");
   }
 
+  // Extraction jobs table for background processing with progress tracking
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS extraction_jobs (
+      id TEXT PRIMARY KEY,
+      url TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      stage TEXT,
+      progress INTEGER DEFAULT 0,
+      error_message TEXT,
+      recipe_id TEXT REFERENCES recipes(id) ON DELETE SET NULL,
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS extraction_jobs_url_idx ON extraction_jobs(url);
+    CREATE INDEX IF NOT EXISTS extraction_jobs_status_idx ON extraction_jobs(status);
+  `);
+
   const userByEmail = db.prepare("SELECT * FROM users WHERE email = ?");
   const userById = db.prepare("SELECT * FROM users WHERE id = ?");
+
+  const jobById = db.prepare("SELECT * FROM extraction_jobs WHERE id = ?");
+  const jobByUrl = db.prepare("SELECT * FROM extraction_jobs WHERE url = ? ORDER BY created_at DESC LIMIT 1");
+  const jobsByUrl = db.prepare("SELECT * FROM extraction_jobs WHERE url = ? ORDER BY created_at DESC");
 
   function createUser(email, password) {
     const existing = userByEmail.get(email);
@@ -185,6 +207,82 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     return { id: row.id, email: row.email, createdAt: row.created_at };
   }
 
+  function createExtractionJob(url, userId) {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    db.prepare(
+      "INSERT INTO extraction_jobs (id, url, status, stage, progress, created_by, created_at, updated_at) VALUES (?, ?, 'pending', 'queued', 0, ?, ?, ?)"
+    ).run(id, url, userId ?? null, now, now);
+    return { id, url, status: "pending", stage: "queued", progress: 0, createdAt: now };
+  }
+
+  function getExtractionJob(id) {
+    const row = jobById.get(id);
+    if (!row) return null;
+    return {
+      id: row.id,
+      url: row.url,
+      status: row.status,
+      stage: row.stage,
+      progress: row.progress,
+      errorMessage: row.error_message,
+      recipeId: row.recipe_id,
+      createdBy: row.created_by,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  function getExtractionJobByUrl(url) {
+    const row = jobByUrl.get(url);
+    if (!row) return null;
+    return {
+      id: row.id,
+      url: row.url,
+      status: row.status,
+      stage: row.stage,
+      progress: row.progress,
+      errorMessage: row.error_message,
+      recipeId: row.recipe_id,
+      createdBy: row.created_by,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  function getExtractionJobsByUrl(url) {
+    return db
+      .prepare("SELECT * FROM extraction_jobs WHERE url = ? ORDER BY created_at DESC")
+      .all(url)
+      .map((row) => ({
+        id: row.id,
+        url: row.url,
+        status: row.status,
+        stage: row.stage,
+        progress: row.progress,
+        errorMessage: row.error_message,
+        recipeId: row.recipe_id,
+        createdBy: row.created_by,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }));
+  }
+
+  function updateExtractionJob(id, updates) {
+    const fields = [];
+    const params = [];
+    if (updates.status !== undefined) { fields.push("status = ?"); params.push(updates.status); }
+    if (updates.stage !== undefined) { fields.push("stage = ?"); params.push(updates.stage); }
+    if (updates.progress !== undefined) { fields.push("progress = ?"); params.push(updates.progress); }
+    if (updates.errorMessage !== undefined) { fields.push("error_message = ?"); params.push(updates.errorMessage); }
+    if (updates.recipeId !== undefined) { fields.push("recipe_id = ?"); params.push(updates.recipeId); }
+    if (fields.length === 0) return;
+    fields.push("updated_at = ?");
+    params.push(new Date().toISOString());
+    params.push(id);
+    db.prepare(`UPDATE extraction_jobs SET ${fields.join(", ")} WHERE id = ?`).run(...params);
+  }
+
   const recipeById = db.prepare("SELECT * FROM recipes WHERE id = ?");
   const sourcesByRecipe = db.prepare(
     "SELECT url FROM recipe_sources WHERE recipe_id = ? ORDER BY created_at ASC",
@@ -201,17 +299,10 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     return source ? getRecipe(source.recipe_id) : null;
   }
 
-  function list(userId) {
-    let query = "SELECT id FROM recipes";
-    const params = [];
-    if (userId) {
-      query += " WHERE user_id = ?";
-      params.push(userId);
-    }
-    query += " ORDER BY updated_at DESC, title COLLATE NOCASE ASC";
+  function list() {
     return db
-      .prepare(query)
-      .all(...params)
+      .prepare("SELECT id FROM recipes ORDER BY updated_at DESC, title COLLATE NOCASE ASC")
+      .all()
       .map(({ id }) => getRecipe(id));
   }
 
@@ -327,7 +418,13 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     verifyUser,
     deleteRecipe,
     getBySource,
+    getRecipe,
     list,
     saveImported,
+    createExtractionJob,
+    getExtractionJob,
+    getExtractionJobByUrl,
+    getExtractionJobsByUrl,
+    updateExtractionJob,
   };
 }

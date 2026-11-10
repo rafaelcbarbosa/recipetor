@@ -162,6 +162,14 @@ function App() {
   const [savedRecipes, setSavedRecipes] = useState<Recipe[]>([]);
   const [serverState, setServerState] = useState<"checking" | "ready" | "hermes-missing" | "offline">("checking");
   const [isImporting, setIsImporting] = useState(false);
+  const [importJob, setImportJob] = useState<{
+    id: string;
+    status: string;
+    stage: string;
+    progress: number;
+    errorMessage?: string;
+    recipeId?: string;
+  } | null>(null);
   const [portions, setPortions] = useState<number | null>(null);
   const [commitInfo, setCommitInfo] = useState<{ hash: string; date: string; message: string } | null>(null);
   const [ingredientUnits, setIngredientUnits] = useState<Record<number, string>>({});
@@ -288,73 +296,138 @@ function App() {
   }
 
   async function handleImport(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    let url: URL;
-    try {
-      url = new URL(instagramLink.trim());
-    } catch {
-      setNotice("Enter a complete Instagram link to continue.");
-      return;
-    }
-
-    if (
-      url.protocol !== "https:" ||
-      !["instagram.com", "www.instagram.com"].includes(url.hostname) ||
-      !/^\/(?:p|reel|tv)\/[A-Za-z0-9_-]+\/?$/i.test(url.pathname)
-    ) {
-      setNotice("That doesn't look like an Instagram link. Check the URL and try again.");
-      return;
-    }
-
-    setIsImporting(true);
-    setNotice("Checking the link…");
-    try {
-      const response = await apiFetch("/api/recipes/import", {
-        method: "POST",
-        body: JSON.stringify({ url: url.href }),
-      });
-      if (!response.ok) {
-        let message = "Recipe import failed. Try again.";
-        try {
-          const errorData = await response.json();
-          message = errorData.error || message;
-        } catch {
-          // response wasn't JSON
-        }
-        throw new Error(message);
+      event.preventDefault();
+      let url: URL;
+      try {
+        url = new URL(instagramLink.trim());
+      } catch {
+        setNotice("Enter a complete Instagram link to continue.");
+        return;
       }
-      setNotice("Extracting recipe with Hermes…");
-      const result = await response.json() as {
-        recipe?: Recipe;
-        duplicate?: boolean;
-        reason?: string;
-        error?: string;
-      };
-      if (!response.ok) throw new Error(result.error || "Recipe import failed. Try again.");
-      if (!result.recipe) throw new Error("The server returned no recipe. Try again.");
 
-      const importedRecipe = result.recipe;
-      setSavedRecipes((current) => [
-        importedRecipe,
-        ...current.filter((recipe) => recipe.id !== importedRecipe.id),
-      ]);
-      setSelectedRecipe(importedRecipe);
-      setIngredientUnits({});
-      setPortions(importedRecipe.basePortions ?? null);
-      setInstagramLink("");
-      setNotice(
-        result.reason === "source"
-          ? "This link was already saved. Here’s the recipe."
-          : result.duplicate
-            ? "Same recipe found. The new Instagram link was added to it."
-            : "Recipe extracted and saved to your recipe box.",
-      );
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Recipe import failed. Try again.");
-    } finally {
-      setIsImporting(false);
+      if (
+        url.protocol !== "https:" ||
+        !["instagram.com", "www.instagram.com"].includes(url.hostname) ||
+        !/^\/(?:p|reel|tv)\/[A-Za-z0-9_-]+\/?$/i.test(url.pathname)
+      ) {
+        setNotice("That doesn't look like an Instagram link. Check the URL and try again.");
+        return;
+      }
+
+      setIsImporting(true);
+      setNotice("Checking the link…");
+      try {
+        const response = await apiFetch("/api/recipes/import", {
+                method: "POST",
+                body: JSON.stringify({ url: url.href }),
+              });
+              if (!response.ok) {
+                let message = "Recipe import failed. Try again.";
+                try {
+                  const errorData = await response.json();
+                  message = errorData.error || message;
+                } catch {
+                  // response wasn't JSON
+                }
+                throw new Error(message);
+              }
+              const result = await response.json() as {
+                job?: { id: string; status: string; stage: string; progress: number; errorMessage?: string; recipeId?: string };
+                recipe?: Recipe;
+                duplicate?: boolean;
+                reason?: string;
+                error?: string;
+                message?: string;
+              };
+
+              if (result.recipe) {
+                // Recipe already exists (duplicate)
+                const importedRecipe = result.recipe;
+                setSavedRecipes((current) => [
+                  importedRecipe,
+                  ...current.filter((recipe) => recipe.id !== importedRecipe.id),
+                ]);
+                setSelectedRecipe(importedRecipe);
+                setIngredientUnits({});
+                setPortions(importedRecipe.basePortions ?? null);
+                setInstagramLink("");
+                setNotice(
+                  result.reason === "source"
+                    ? "This link was already saved. Here's the recipe."
+                    : result.duplicate
+                    ? "Same recipe found. The new Instagram link was added to it."
+                    : "Recipe extracted and saved to your recipe box.",
+                );
+                setIsImporting(false);
+                return;
+              }
+
+              if (result.job) {
+                // Job started or existing job found, start polling
+                setImportJob(result.job);
+                setNotice("Extracting recipe with Hermes…");
+                pollJobStatus(result.job.id);
+                return;
+              }
+
+              throw new Error("Unexpected server response.");
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : "Recipe import failed. Try again.");
+        setIsImporting(false);
+      }
     }
-  }
+
+    async function pollJobStatus(jobId: string) {
+      try {
+        const response = await apiFetch(`/api/recipes/import/status/${jobId}`);
+        if (!response.ok) throw new Error("Failed to check job status.");
+        const result = await response.json() as { job: { id: string; status: string; stage: string; progress: number; errorMessage?: string; recipeId?: string } };
+        const job = result.job;
+        setImportJob(job);
+
+        const stageMessages: Record<string, string> = {
+          queued: "Waiting in queue…",
+          fetching: "Fetching recipe from Instagram…",
+          extracting: "Extracting recipe with Hermes…",
+          saving: "Saving recipe…",
+          completed: "Recipe ready!",
+          failed: "Extraction failed.",
+        };
+
+        if (job.status === "completed" && job.recipeId) {
+          // Fetch the completed recipe
+          const recipeResponse = await apiFetch(`/api/recipes/${job.recipeId}`);
+          if (recipeResponse.ok) {
+            const recipe = await recipeResponse.json();
+            setSavedRecipes((current) => [recipe, ...current.filter((r) => r.id !== recipe.id)]);
+            setSelectedRecipe(recipe);
+            setIngredientUnits({});
+            setPortions(recipe.basePortions ?? null);
+            setInstagramLink("");
+            setNotice("Recipe extracted and saved to your recipe box!");
+          }
+          setIsImporting(false);
+          setImportJob(null);
+          return;
+        }
+
+        if (job.status === "failed") {
+          const errorDetail = job.errorMessage || "Unknown error during extraction.";
+          setNotice(`Failed to extract recipe: ${errorDetail}`);
+          setIsImporting(false);
+          setImportJob(null);
+          return;
+        }
+
+        setNotice(stageMessages[job.stage] || `Processing… (${job.progress}%)`);
+        // Poll again in 2 seconds
+        setTimeout(() => pollJobStatus(jobId), 2000);
+      } catch (error) {
+        setNotice("Lost connection to import job. Please try again.");
+        setIsImporting(false);
+        setImportJob(null);
+      }
+    }
 
   async function shareRecipe(recipe: Recipe) {
     const shareData = { title: recipe.title, text: `Try this recipe: ${recipe.title}`, url: window.location.href };
@@ -580,6 +653,17 @@ function App() {
                 <input id="instagram-link" type="url" value={instagramLink} onChange={(event) => { setInstagramLink(event.target.value); setNotice(""); }} placeholder="Paste an Instagram reel or post link" />
                 <button type="submit" disabled={isImporting}>{isImporting ? "Checking…" : <>Find recipe <Icon name="arrow" size={16} /></>}</button>
               </form>
+              {importJob && isImporting && (
+                <div className="import-progress" role="status" aria-live="polite">
+                  <div className="progress-bar">
+                    <div className="progress-fill" style={{ width: `${importJob.progress}%` }} />
+                  </div>
+                  <div className="progress-info">
+                    <span className="progress-stage">{importJob.stage.charAt(0).toUpperCase() + importJob.stage.slice(1)}</span>
+                    <span className="progress-percent">{importJob.progress}%</span>
+                  </div>
+                </div>
+              )}
               <div className="import-foot">
                 <span className={`server-status server-${serverState}`}><span />
                   {serverState === "checking" ? "Checking recipe server…" : serverState === "ready" ? "Hermes connected" : serverState === "hermes-missing" ? "Hermes is not available on the server" : "Recipe server unavailable"}
