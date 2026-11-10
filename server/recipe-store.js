@@ -2,6 +2,49 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import nodemailer from "nodemailer";
+
+function createTransporter() {
+  const host = process.env.SMTP_HOST;
+  const port = parseInt(process.env.SMTP_PORT || "587", 10);
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  const from = process.env.SMTP_FROM || user;
+
+  if (!host || !user || !pass) {
+    return null;
+  }
+
+  return nodemailer.createTransport({
+    host,
+    port,
+    secure: port === 465,
+    auth: { user, pass },
+  });
+}
+
+let transporter = null;
+function getTransporter() {
+  if (!transporter) {
+    transporter = createTransporter();
+  }
+  return transporter;
+}
+
+async function sendEmail(to, subject, html) {
+  const t = getTransporter();
+  if (!t) {
+    console.warn("Email not configured (missing SMTP env vars), skipping send to", to);
+    return false;
+  }
+  try {
+    await t.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to, subject, html });
+    return true;
+  } catch (error) {
+    console.error("Failed to send email:", error instanceof Error ? error.message : "Unknown error");
+    return false;
+  }
+}
 
 const PREPARATION_WORDS = new Set([
   "chopped", "diced", "minced", "sliced", "crushed", "grated", "shredded",
@@ -374,6 +417,22 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
       console.log(`Expires: ${expiresAt}`);
       console.log(`=== END PASSWORD RESET CODE ===\n`);
 
+      // Send email
+      const html = `
+        <div style="font-family: system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h2 style="color: #333;">Reset your password</h2>
+          <p>You requested a password reset for your recipetor account.</p>
+          <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; text-align: center; margin: 20px 0;">
+            <span style="font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #333;">${code}</span>
+          </div>
+          <p>This code expires in 15 minutes.</p>
+          <p>If you didn't request this, please ignore this email.</p>
+          <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+          <p style="color: #666; font-size: 12px;">recipetor</p>
+        </div>
+      `;
+      sendEmail(email, "Reset your recipetor password", html);
+
       return { success: true, message: "Password reset code sent" };
     }
 
@@ -420,6 +479,22 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
       console.log(`Code: ${code}`);
       console.log(`Expires: ${expiresAt}`);
       console.log(`=== END PASSWORD RESET CODE ===\n`);
+
+      // Send email
+      const html = `
+        <div style="font-family: system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h2 style="color: #333;">Reset your password</h2>
+          <p>You requested a new password reset code for your recipetor account.</p>
+          <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; text-align: center; margin: 20px 0;">
+            <span style="font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #333;">${code}</span>
+          </div>
+          <p>This code expires in 15 minutes.</p>
+          <p>If you didn't request this, please ignore this email.</p>
+          <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+          <p style="color: #666; font-size: 12px;">recipetor</p>
+        </div>
+      `;
+      sendEmail(email, "Your new recipetor password reset code", html);
 
       return { success: true, message: "Password reset code sent" };
     }

@@ -1,5 +1,5 @@
 {
-  "hash": "7ef4d93",
-  "date": "2026-11-10 13:09:57 -0600",
-  "message": "fix: include email in EMAIL_NOT_VERIFIED login response for frontend auto-switch"
+  "hash": "6b1d6c2",
+  "date": "2026-11-10 14:28:59 -0600",
+  "message": "Add password reset mechanism via email"
 }
