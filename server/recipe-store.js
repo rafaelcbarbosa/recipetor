@@ -5,22 +5,28 @@ import { DatabaseSync } from "node:sqlite";
 import nodemailer from "nodemailer";
 
 function createTransporter() {
-  const host = process.env.SMTP_HOST;
-  const port = parseInt(process.env.SMTP_PORT || "587", 10);
+  // Use local Postfix relay if available (no auth needed on localhost)
+  // Falls back to SMTP_* env vars for external SMTP
+  const host = process.env.SMTP_HOST || "localhost";
+  const port = parseInt(process.env.SMTP_PORT || "25", 10);
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
   const from = process.env.SMTP_FROM || user;
 
-  if (!host || !user || !pass) {
-    return null;
-  }
-
-  return nodemailer.createTransport({
+  const transportOptions = {
     host,
     port,
     secure: port === 465,
-    auth: { user, pass },
-  });
+    // Skip verification for local Postfix
+    tls: { rejectUnauthorized: false },
+  };
+
+  // Only add auth if credentials provided (for external SMTP)
+  if (user && pass) {
+    transportOptions.auth = { user, pass };
+  }
+
+  return nodemailer.createTransport(transportOptions);
 }
 
 let transporter = null;
@@ -33,12 +39,10 @@ function getTransporter() {
 
 async function sendEmail(to, subject, html) {
   const t = getTransporter();
-  if (!t) {
-    console.warn("Email not configured (missing SMTP env vars), skipping send to", to);
-    return false;
-  }
+  const from = process.env.SMTP_FROM || "recipetor <noreply@barbtech.com>";
   try {
-    await t.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to, subject, html });
+    await t.sendMail({ from, to, subject, html });
+    console.log("Email sent via Postfix to", to);
     return true;
   } catch (error) {
     console.error("Failed to send email:", error instanceof Error ? error.message : "Unknown error");
