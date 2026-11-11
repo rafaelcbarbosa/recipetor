@@ -118,13 +118,32 @@ function App() {
   const [history, setHistory] = useState<Array<Recipe & { action: string; createdAt: string }>>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showUpdatePrompt, setShowUpdatePrompt] = useState(false);
+  const [currentCommitHash, setCurrentCommitHash] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/commit-info.json")
       .then((res) => res.json())
-      .then((data) => setCommitInfo(data))
+      .then((data) => {
+        setCommitInfo(data);
+        setCurrentCommitHash(data.hash);
+      })
       .catch(() => {});
   }, []);
+
+  // Check for updates every 30 seconds
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch("/commit-info.json");
+        const data = await res.json();
+        if (currentCommitHash && data.hash !== currentCommitHash) {
+          setShowUpdatePrompt(true);
+        }
+      } catch {}
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [currentCommitHash]);
 
   useEffect(() => {
     if (token) localStorage.setItem("recipetor_token", token);
@@ -135,7 +154,7 @@ function App() {
     if (!token) return;
     try {
       const response = await fetch("/api/auth/me", {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${token}` }
       });
       if (response.ok) {
         const data = await response.json();
@@ -367,7 +386,7 @@ function App() {
       console.log("[ForgotPassword] Response:", response.status, data);
       if (!response.ok) throw new Error(data.error || "Failed to send reset code.");
       setAuthMode("reset-password");
-      setNotice("Reset code sent! Check the server logs for the code.");
+      setNotice("Reset code sent! Check your email.");
     } catch (error) {
       console.error("[ForgotPassword] Error:", error);
       setNotice(error instanceof Error ? error.message : "Failed to send reset code. Try again.");
@@ -1119,6 +1138,20 @@ function App() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {showUpdatePrompt && (
+        <div className="modal-overlay" onClick={() => setShowUpdatePrompt(false)}>
+          <div className="modal modal-update-prompt" onClick={(e) => e.stopPropagation()}>
+            <div className="update-prompt-content">
+              <div className="update-icon"><Icon name="refresh-cw" size={28} /></div>
+              <h3>Update available</h3>
+              <p>A new version of recipetor is ready.</p>
+              <button className="btn btn-primary" onClick={() => window.location.reload()}>Refresh now</button>
+              <button className="btn btn-ghost" onClick={() => setShowUpdatePrompt(false)}>Later</button>
+            </div>
           </div>
         </div>
       )}

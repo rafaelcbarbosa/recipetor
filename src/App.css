@@ -306,6 +306,12 @@ h1 { margin-bottom: 7px; font-family: Georgia, "Times New Roman", serif; font-si
   .mobile-account-hint { color: #91897e; font-size: 11px; margin: 0 0 16px; }
   .mobile-account-actions { display: grid; gap: 10px; }
   .mobile-account-actions .btn { width: 100%; justify-content: center; }
+  .modal-update-prompt { display: block; width: 100%; max-height: 91vh; border-radius: 18px 18px 0 0; }
+  .update-prompt-content { padding: 20px 20px calc(24px + env(safe-area-inset-bottom)); text-align: center; }
+  .update-icon { color: #ce6040; margin-bottom: 12px; }
+  .update-prompt-content h3 { margin: 8px 0 4px; font-size: 18px; }
+  .update-prompt-content p { color: #91897e; font-size: 13px; margin: 0 0 16px; }
+  .update-prompt-content .btn { width: 100%; justify-content: center; margin-bottom: 8px; }
 }
 @media (max-width: 370px) {
   .content-wrap { padding-right: 14px; padding-left: 14px; }
