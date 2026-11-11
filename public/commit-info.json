@@ -1,5 +1,5 @@
 {
-  "hash": "9691fab",
-  "date": "2026-11-10 20:38:58 -0600",
-  "message": "Add mobile account menu in header for iPhone layout"
+  "hash": "7172f44",
+  "date": "2026-11-11 08:59:27 -0600",
+  "message": "Add auto-update prompt for PWA; fix forgot password notice message"
 }

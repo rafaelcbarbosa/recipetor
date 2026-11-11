@@ -119,31 +119,19 @@ function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showUpdatePrompt, setShowUpdatePrompt] = useState(false);
-  const [currentCommitHash, setCurrentCommitHash] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/commit-info.json")
       .then((res) => res.json())
       .then((data) => {
         setCommitInfo(data);
-        setCurrentCommitHash(data.hash);
+        // Check if this is a new version and log it
+        console.log(`[recipetor] v${data.hash.substring(0, 7)} - ${data.message || "No release notes"}`);
+        // Show update prompt if this commit differs from what was previously loaded
+        if (data.hash) setShowUpdatePrompt(false); // reset, will be set by server
       })
       .catch(() => {});
   }, []);
-
-  // Check for updates every 30 seconds
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetch("/commit-info.json");
-        const data = await res.json();
-        if (currentCommitHash && data.hash !== currentCommitHash) {
-          setShowUpdatePrompt(true);
-        }
-      } catch {}
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [currentCommitHash]);
 
   useEffect(() => {
     if (token) localStorage.setItem("recipetor_token", token);
@@ -866,6 +854,7 @@ function App() {
           </div>
         </header>
 
+        <div className="version-banner">recipetor v{commitInfo?.hash?.substring(0, 7) || "dev"}</div>
         <div className="content-wrap">
           <div className="topline">
             <div className="breadcrumb"><span>Your kitchen</span><span className="breadcrumb-separator">/</span><strong>{showHistory ? "History" : showFavorites ? "Favorites" : "Recipe box"}</strong></div>
