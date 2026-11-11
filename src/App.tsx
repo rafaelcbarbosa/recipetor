@@ -112,6 +112,7 @@ function App() {
   const [verifyEmail, setVerifyEmail] = useState<string>("");
   const [resetEmail, setResetEmail] = useState<string>("");
   const [showQueue, setShowQueue] = useState(false);
+  const [showMobileAccount, setShowMobileAccount] = useState(false);
   const [queueJobs, setQueueJobs] = useState<Array<{ id: string; url: string; status: string; stage: string; progress: number; errorMessage?: string; recipeId?: string; createdBy: string | null; createdAt: string }>>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [history, setHistory] = useState<Array<Recipe & { action: string; createdAt: string }>>([]);
@@ -836,7 +837,14 @@ function App() {
             </svg>
             <span>recipetor</span>
           </a>
-          <button className={`mobile-favorite ${showFavorites ? "active" : ""}`} aria-label="Toggle favorites" onClick={() => setShowFavorites(!showFavorites)}><Icon name="bookmark" /></button>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            {user && (
+              <button className="mobile-account" aria-label="Account" onClick={() => setShowMobileAccount(true)}>
+                <span className="avatar"><svg className="avatar-icon" viewBox="0 0 512 512" aria-hidden="true"><path fill="#4A2C1A" d="M256 512c-141.4 0-256-94.6-256-211.3 0-147.3 147.6-209.3 165.3-231.1 4.1-5.1 9.3-8.1 14.7-8.1h180c5.4 0 10.6 3 14.7 8.1 17.7 21.8 165.3 83.8 165.3 231.1 0 116.7-114.6 211.3-256 211.3zm0-144c-44.2 0-80-35.8-80-80s35.8-80 80-80 80 35.8 80 80-35.8 80-80 80zm0-32c53 0 96-43 96-96s-43-96-96-96-96 43-96 96 43 96 96 96z"/></svg></span>
+              </button>
+            )}
+            <button className={`mobile-favorite ${showFavorites ? "active" : ""}`} aria-label="Toggle favorites" onClick={() => setShowFavorites(!showFavorites)}><Icon name="bookmark" /></button>
+          </div>
         </header>
 
         <div className="content-wrap">
@@ -1080,6 +1088,37 @@ function App() {
               <button className="btn btn-secondary" onClick={() => setShowDeleteConfirm(false)}>Cancel</button>
               <button className="btn btn-danger" onClick={handleDeleteAccount}>Delete my account</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showMobileAccount && (
+        <div className="modal-overlay" onClick={() => setShowMobileAccount(false)}>
+          <div className="modal modal-mobile-account" onClick={(e) => e.stopPropagation()}>
+            {user ? (
+              <div className="mobile-account-content">
+                <div className="mobile-account-header">
+                  <span className="avatar"><svg className="avatar-icon" viewBox="0 0 512 512" aria-hidden="true"><path fill="#4A2C1A" d="M256 512c-141.4 0-256-94.6-256-211.3 0-147.3 147.6-209.3 165.3-231.1 4.1-5.1 9.3-8.1 14.7-8.1h180c5.4 0 10.6 3 14.7 8.1 17.7 21.8 165.3 83.8 165.3 231.1 0 116.7-114.6 211.3-256 211.3zm0-144c-44.2 0-80-35.8-80-80s35.8-80 80-80 80 35.8 80 80-35.8 80-80 80zm0-32c53 0 96-43 96-96s-43-96-96-96-96 43-96 96 43 96 96 96z"/></svg></span>
+                  <div className="mobile-account-info">
+                    <strong>{user.email}</strong>
+                    <small>Signed in</small>
+                  </div>
+                </div>
+                <div className="mobile-account-actions">
+                  <button className="btn btn-secondary" onClick={handleLogout}>Sign out</button>
+                  <button className="btn btn-danger" onClick={() => { setShowMobileAccount(false); setShowDeleteConfirm(true); }}>Delete account</button>
+                </div>
+              </div>
+            ) : (
+              <div className="mobile-account-content">
+                <h3>Sign in to save recipes</h3>
+                <p className="mobile-account-hint">Your recipes, favorites, and history sync across devices.</p>
+                <div className="mobile-account-actions">
+                  <button className="btn btn-primary" onClick={() => { setShowMobileAccount(false); setAuthMode("login"); }}>Sign in</button>
+                  <button className="btn btn-secondary" onClick={() => { setShowMobileAccount(false); setAuthMode("register"); }}>Create account</button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

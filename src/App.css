@@ -231,6 +231,9 @@ h1 { margin-bottom: 7px; font-family: Georgia, "Times New Roman", serif; font-si
   .brand-mark { width: 29px; height: 29px; border-radius: 10px; font-size: 21px; }
   .mobile-favorite { display: grid; width: 36px; height: 36px; place-items: center; border: 1px solid #ece7df; border-radius: 50%; background: #fff; color: #71695f; }
   .mobile-favorite.active { color: #d56342; }
+  .mobile-account { display: grid; width: 36px; height: 36px; place-items: center; border: 1px solid #ece7df; border-radius: 50%; background: #fff; color: #71695f; }
+  .mobile-account .avatar { width: 26px; height: 26px; border-radius: 50%; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+  .mobile-account .avatar-icon { width: 26px; height: 26px; }
   .content-wrap { padding: 18px 18px 22px; }
   .topline { min-height: 24px; }
   .welcome-row { align-items: start; margin: 26px 0 20px; }
@@ -292,6 +295,17 @@ h1 { margin-bottom: 7px; font-family: Georgia, "Times New Roman", serif; font-si
   .modal-content h2 { font-size: 25px; }
   .modal-recipe-columns { grid-template-columns: 1fr; gap: 19px; }
   .modal-recipe-columns ul, .modal-recipe-columns ol { font-size: 11px; }
+  .modal-mobile-account { display: block; width: 100%; max-height: 91vh; border-radius: 18px 18px 0 0; }
+  .mobile-account-content { padding: 20px 20px calc(24px + env(safe-area-inset-bottom)); text-align: center; }
+  .mobile-account-header { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 12px; }
+  .mobile-account-header .avatar { width: 48px; height: 48px; border-radius: 50%; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #f5f0e8; }
+  .mobile-account-header .avatar-icon { width: 48px; height: 48px; }
+  .mobile-account-info { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; }
+  .mobile-account-info strong { font-size: 14px; color: #403a34; font-weight: 600; }
+  .mobile-account-info small { font-size: 11px; color: #948c81; }
+  .mobile-account-hint { color: #91897e; font-size: 11px; margin: 0 0 16px; }
+  .mobile-account-actions { display: grid; gap: 10px; }
+  .mobile-account-actions .btn { width: 100%; justify-content: center; }
 }
 @media (max-width: 370px) {
   .content-wrap { padding-right: 14px; padding-left: 14px; }
