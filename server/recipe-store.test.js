@@ -26,7 +26,10 @@ const recipe = {
 
 function createTestStore() {
   const directory = mkdtempSync(join(tmpdir(), "recipetor-test-"));
-  const store = createRecipeStore(join(directory, "recipes.sqlite"));
+  const store = createRecipeStore(join(directory, "recipes.sqlite"), {
+    generateCode: () => "123456",
+    emailSender: async () => true,
+  });
   return {
     store,
     cleanup() {
@@ -60,6 +63,26 @@ test("stores a recipe once and attaches matching recipes from another source", (
     assert.equal(second.recipe.id, first.recipe.id);
     assert.equal(second.recipe.sourceCount, 2);
     assert.equal(store.list().length, 1);
+  } finally {
+    cleanup();
+  }
+});
+
+test("favorites and logs an attached recipe once per user", () => {
+  const { store, cleanup } = createTestStore();
+  try {
+    const firstUser = store.createUser("first@example.com", "secret1");
+    const secondUser = store.createUser("second@example.com", "secret1");
+
+    const first = store.saveImported("https://www.instagram.com/p/FIRST/", recipe, firstUser.id);
+    const attached = store.saveImported("https://www.instagram.com/p/SECOND/", recipe, secondUser.id);
+    store.saveImported("https://www.instagram.com/p/THIRD/", recipe, firstUser.id);
+
+    assert.equal(attached.recipe.id, first.recipe.id);
+    assert.deepEqual(store.listFavorites(firstUser.id), [first.recipe.id]);
+    assert.deepEqual(store.listFavorites(secondUser.id), [first.recipe.id]);
+    assert.equal(store.getUserHistory(firstUser.id).length, 1);
+    assert.equal(store.getUserHistory(secondUser.id).length, 1);
   } finally {
     cleanup();
   }

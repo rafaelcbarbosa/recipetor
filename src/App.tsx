@@ -482,14 +482,13 @@ function App() {
                   importedRecipe,
                   ...current.filter((recipe) => recipe.id !== importedRecipe.id),
                 ]);
-                // Auto-add to favorites and history if user is logged in
+                // The server favorites and logs the import for signed-in users.
                 if (user) {
-                  try {
-                    await apiFetch("/api/favorites", { method: "POST", body: JSON.stringify({ recipeId: importedRecipe.id }) });
-                    setFavorites((current) => current.includes(importedRecipe.id) ? current : [...current, importedRecipe.id]);
-                    await apiFetch("/api/history", { method: "POST", body: JSON.stringify({ recipeId: importedRecipe.id, action: "added" }) });
+                  const isNewFavorite = !favorites.includes(importedRecipe.id);
+                  setFavorites((current) => current.includes(importedRecipe.id) ? current : [...current, importedRecipe.id]);
+                  if (isNewFavorite) {
                     setHistory((current) => [{ ...importedRecipe, action: "added", createdAt: new Date().toISOString() }, ...current]);
-                  } catch {}
+                  }
                 }
                 setSelectedRecipe(importedRecipe);
                 setIngredientUnits({});
@@ -544,14 +543,13 @@ function App() {
           if (recipeResponse.ok) {
             const recipe = await recipeResponse.json();
             setSavedRecipes((current) => [recipe, ...current.filter((r) => r.id !== recipe.id)]);
-            // Auto-add to favorites and history if user is logged in
+            // The server favorites and logs the import for signed-in users.
             if (user) {
-              try {
-                await apiFetch("/api/favorites", { method: "POST", body: JSON.stringify({ recipeId: recipe.id }) });
-                setFavorites((current) => current.includes(recipe.id) ? current : [...current, recipe.id]);
-                await apiFetch("/api/history", { method: "POST", body: JSON.stringify({ recipeId: recipe.id, action: "added" }) });
+              const isNewFavorite = !favorites.includes(recipe.id);
+              setFavorites((current) => current.includes(recipe.id) ? current : [...current, recipe.id]);
+              if (isNewFavorite) {
                 setHistory((current) => [{ ...recipe, action: "added", createdAt: new Date().toISOString() }, ...current]);
-              } catch {}
+              }
             }
             setSelectedRecipe(recipe);
             setIngredientUnits({});
@@ -628,14 +626,29 @@ function App() {
   }
 
   async function deleteRecipe(id: string) {
-    if (!window.confirm("Delete this recipe?")) return;
-    const response = await fetch(`/api/recipes/${id}`, { method: "DELETE" });
-    if (!response.ok) {
-      setNotice("Couldn't delete the recipe. Try again.");
+    if (!user) {
+      setNotice("Please sign in to delete recipes.");
       return;
     }
+    if (!window.confirm("Delete this recipe?")) return;
+
+    const response = await apiFetch(`/api/recipes/${id}`, { method: "DELETE" });
+    if (!response.ok) {
+      let message = "Couldn't delete the recipe. Try again.";
+      try {
+        const data = await response.json() as { error?: string };
+        if (data.error) message = data.error;
+      } catch {
+        // Keep the generic message when the response isn't JSON.
+      }
+      setNotice(message);
+      return;
+    }
+
     setSelectedRecipe(null);
     setSavedRecipes((current) => current.filter((recipe) => recipe.id !== id));
+    setFavorites((current) => current.filter((favoriteId) => favoriteId !== id));
+    setHistory((current) => current.filter((entry) => entry.id !== id));
     setNotice("Recipe deleted.");
   }
 

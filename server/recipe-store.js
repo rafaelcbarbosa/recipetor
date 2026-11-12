@@ -50,6 +50,39 @@ async function sendEmail(to, subject, html) {
   }
 }
 
+function defaultGenerateCode() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+function sendCodeEmail(emailSender, to, subject, html, code, label) {
+  void Promise.resolve(emailSender(to, subject, html))
+    .then((delivered) => {
+      // Keep local development usable when no SMTP relay is configured.
+      if (delivered === false && process.env.NODE_ENV !== "production") {
+        console.log(`[dev] ${label} for ${to}: ${code}`);
+      }
+    })
+    .catch((error) => {
+      console.error(`Failed to send ${label.toLowerCase()} email:`, error instanceof Error ? error.message : "Unknown error");
+    });
+}
+
+function codeEmailHtml(title, intro, code) {
+  return `
+    <div style="font-family: system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+      <h2 style="color: #333;">${title}</h2>
+      <p>${intro}</p>
+      <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; text-align: center; margin: 20px 0;">
+        <span style="font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #333;">${code}</span>
+      </div>
+      <p>This code expires in 15 minutes.</p>
+      <p>If you didn't request this, please ignore this email.</p>
+      <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+      <p style="color: #666; font-size: 12px;">recipetor</p>
+    </div>
+  `;
+}
+
 const PREPARATION_WORDS = new Set([
   "chopped", "diced", "minced", "sliced", "crushed", "grated", "shredded",
   "fresh", "large", "small", "medium", "finely", "roughly", "divided",
@@ -131,7 +164,10 @@ function toRecipe(row, sourceRows) {
   };
 }
 
-export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
+export function createRecipeStore(
+  databasePath = "./data/recipetor.sqlite",
+  { emailSender = sendEmail, generateCode = defaultGenerateCode } = {},
+) {
   const path = databasePath === ":memory:" ? databasePath : resolve(databasePath);
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
 
@@ -279,7 +315,7 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
   // Favorites prepared statements
   const favoritesByUser = db.prepare("SELECT recipe_id FROM favorites WHERE user_id = ? ORDER BY created_at DESC");
   const favoriteByUserAndRecipe = db.prepare("SELECT * FROM favorites WHERE user_id = ? AND recipe_id = ?");
-  const addFavoriteStmt = db.prepare("INSERT INTO favorites (user_id, recipe_id, created_at) VALUES (?, ?, ?)");
+  const addFavoriteStmt = db.prepare("INSERT OR IGNORE INTO favorites (user_id, recipe_id, created_at) VALUES (?, ?, ?)");
   const removeFavoriteStmt = db.prepare("DELETE FROM favorites WHERE user_id = ? AND recipe_id = ?");
 
   // History prepared statements
@@ -318,17 +354,21 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
       .run(id, email, passwordHash, salt, now);
     
     // Generate verification code
-    const code = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit code
+    const code = generateCode(); // 6-digit code
     const codeId = randomUUID();
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 minutes
     createVerificationCodeStmt.run(codeId, email, code, expiresAt, now);
-    
-    // Log the code for development (no SMTP server)
-    console.log(`\n=== EMAIL VERIFICATION CODE for ${email} ===`);
-    console.log(`Code: ${code}`);
-    console.log(`Expires: ${expiresAt}`);
-    console.log(`=== END VERIFICATION CODE ===\n`);
-    
+
+    // Send the code by email. Registration still succeeds if delivery fails.
+    sendCodeEmail(
+      emailSender,
+      email,
+      "Verify your recipetor email",
+      codeEmailHtml("Verify your email", "Use this code to finish creating your recipetor account.", code),
+      code,
+      "Verification code",
+    );
+
     return { id, email, createdAt: now };
   }
 
@@ -389,16 +429,20 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     deleteExpiredVerificationCodesStmt.run(now);
     
     // Generate new code
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const code = generateCode();
     const codeId = randomUUID();
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
     createVerificationCodeStmt.run(codeId, email, code, expiresAt, now);
-    
-    console.log(`\n=== EMAIL VERIFICATION CODE for ${email} (RESENT) ===`);
-    console.log(`Code: ${code}`);
-    console.log(`Expires: ${expiresAt}`);
-    console.log(`=== END VERIFICATION CODE ===\n`);
-    
+
+    sendCodeEmail(
+      emailSender,
+      email,
+      "Your new recipetor verification code",
+      codeEmailHtml("Verify your email", "Use this code to finish creating your recipetor account.", code),
+      code,
+      "Verification code",
+    );
+
     return { success: true, message: "Verification code sent" };
     }
 
@@ -411,31 +455,19 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
       deleteExpiredPasswordResetCodesStmt.run(now);
 
       // Generate new code
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const code = generateCode();
       const codeId = randomUUID();
       const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 minutes
       createPasswordResetCodeStmt.run(codeId, email, code, expiresAt, now);
 
-      console.log(`\n=== PASSWORD RESET CODE for ${email} ===`);
-      console.log(`Code: ${code}`);
-      console.log(`Expires: ${expiresAt}`);
-      console.log(`=== END PASSWORD RESET CODE ===\n`);
-
-      // Send email
-      const html = `
-        <div style="font-family: system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <h2 style="color: #333;">Reset your password</h2>
-          <p>You requested a password reset for your recipetor account.</p>
-          <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; text-align: center; margin: 20px 0;">
-            <span style="font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #333;">${code}</span>
-          </div>
-          <p>This code expires in 15 minutes.</p>
-          <p>If you didn't request this, please ignore this email.</p>
-          <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-          <p style="color: #666; font-size: 12px;">recipetor</p>
-        </div>
-      `;
-      sendEmail(email, "Reset your recipetor password", html);
+      sendCodeEmail(
+        emailSender,
+        email,
+        "Reset your recipetor password",
+        codeEmailHtml("Reset your password", "You requested a password reset for your recipetor account.", code),
+        code,
+        "Password reset code",
+      );
 
       return { success: true, message: "Password reset code sent" };
     }
@@ -474,31 +506,19 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
       deleteExpiredPasswordResetCodesStmt.run(now);
 
       // Generate new code
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const code = generateCode();
       const codeId = randomUUID();
       const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
       createPasswordResetCodeStmt.run(codeId, email, code, expiresAt, now);
 
-      console.log(`\n=== PASSWORD RESET CODE for ${email} (RESENT) ===`);
-      console.log(`Code: ${code}`);
-      console.log(`Expires: ${expiresAt}`);
-      console.log(`=== END PASSWORD RESET CODE ===\n`);
-
-      // Send email
-      const html = `
-        <div style="font-family: system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <h2 style="color: #333;">Reset your password</h2>
-          <p>You requested a new password reset code for your recipetor account.</p>
-          <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; text-align: center; margin: 20px 0;">
-            <span style="font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #333;">${code}</span>
-          </div>
-          <p>This code expires in 15 minutes.</p>
-          <p>If you didn't request this, please ignore this email.</p>
-          <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-          <p style="color: #666; font-size: 12px;">recipetor</p>
-        </div>
-      `;
-      sendEmail(email, "Your new recipetor password reset code", html);
+      sendCodeEmail(
+        emailSender,
+        email,
+        "Your new recipetor password reset code",
+        codeEmailHtml("Reset your password", "You requested a new password reset code for your recipetor account.", code),
+        code,
+        "Password reset code",
+      );
 
       return { success: true, message: "Password reset code sent" };
     }
@@ -582,6 +602,24 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
       }));
   }
 
+  function listRecoverableExtractionJobs() {
+    return db
+      .prepare("SELECT * FROM extraction_jobs WHERE status IN ('pending', 'processing') ORDER BY created_at ASC")
+      .all()
+      .map((row) => ({
+        id: row.id,
+        url: row.url,
+        status: row.status,
+        stage: row.stage,
+        progress: row.progress,
+        errorMessage: row.error_message,
+        recipeId: row.recipe_id,
+        createdBy: row.created_by,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }));
+  }
+
   function updateExtractionJob(id, updates) {
     const fields = [];
     const params = [];
@@ -609,14 +647,8 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
 
   function addFavorite(userId, recipeId) {
     const now = new Date().toISOString();
-    try {
-      addFavoriteStmt.run(userId, recipeId, now);
-      return true;
-    } catch (error) {
-      // Ignore duplicate key errors (already a favorite)
-      if (error.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') return false;
-      throw error;
-    }
+    const result = addFavoriteStmt.run(userId, recipeId, now);
+    return result.changes > 0;
   }
 
   function removeFavorite(userId, recipeId) {
@@ -657,6 +689,13 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     const row = recipeById.get(id);
     if (!row) return null;
     return toRecipe(row, sourcesByRecipe.all(id));
+  }
+
+  // Returns the owner user id, null for legacy recipes without an owner,
+  // or undefined when the recipe does not exist.
+  function getRecipeOwner(id) {
+    const row = db.prepare("SELECT user_id FROM recipes WHERE id = ?").get(id);
+    return row ? row.user_id ?? null : undefined;
   }
 
   function getBySource(url) {
@@ -717,6 +756,7 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
       const source = db.prepare("SELECT recipe_id FROM recipe_sources WHERE url = ?").get(url);
       if (source) {
         const existing = getRecipe(source.recipe_id);
+        if (userId && addFavorite(userId, source.recipe_id)) addToHistory(userId, source.recipe_id, "added");
         db.exec("COMMIT");
         return { recipe: existing, duplicate: true, reason: "source" };
       }
@@ -735,6 +775,7 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
           .run(url, match.id, now);
         db.prepare("UPDATE recipes SET updated_at = ? WHERE id = ?").run(now, match.id);
         const saved = getRecipe(match.id);
+        if (userId && addFavorite(userId, match.id)) addToHistory(userId, match.id, "added");
         db.exec("COMMIT");
         return { recipe: saved, duplicate: true, reason: "recipe" };
       }
@@ -769,9 +810,8 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
       const saved = getRecipe(id);
       
       // Auto-favorite and add to history for the user who added the recipe
-      if (userId) {
-        addFavorite(userId, id);
-        addToHistory(userId, id, 'added');
+      if (userId && addFavorite(userId, id)) {
+        addToHistory(userId, id, "added");
       }
       
       db.exec("COMMIT");
@@ -798,6 +838,7 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     deleteRecipe,
     getBySource,
     getRecipe,
+    getRecipeOwner,
     list,
     saveImported,
     createExtractionJob,
@@ -805,6 +846,7 @@ export function createRecipeStore(databasePath = "./data/recipetor.sqlite") {
     getExtractionJobByUrl,
     getExtractionJobsByUrl,
     listExtractionJobs,
+    listRecoverableExtractionJobs,
     updateExtractionJob,
     // Favorites
     listFavorites,

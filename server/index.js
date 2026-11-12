@@ -1,7 +1,7 @@
 import { createServer as createHttpServer } from "node:http";
-import { createHash, randomBytes } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { extname, resolve, sep } from "node:path";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHermesExtractor, isHermesAvailable } from "./hermes.js";
 import { createRecipeStore } from "./recipe-store.js";
@@ -10,8 +10,35 @@ const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const MAX_REQUEST_BYTES = 2048;
 const IMPORT_LIMIT = 10;
 const IMPORT_WINDOW_MS = 60 * 60 * 1000;
-const JWT_SECRET = process.env.RECIPETOR_JWT_SECRET || randomBytes(32).toString("hex");
 const JWT_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+// Keep sessions valid across restarts: use RECIPETOR_JWT_SECRET when provided,
+// otherwise persist a generated secret next to the database.
+function loadJwtSecret() {
+  if (process.env.RECIPETOR_JWT_SECRET) return process.env.RECIPETOR_JWT_SECRET;
+  const databasePath = process.env.RECIPETOR_DB_PATH || "./data/recipetor.sqlite";
+  if (databasePath === ":memory:") return randomBytes(32).toString("hex");
+
+  const secretPath = resolve(dirname(databasePath), ".jwt-secret");
+  try {
+    const existing = readFileSync(secretPath, "utf8").trim();
+    if (existing) return existing;
+  } catch {
+    // Generate and persist below.
+  }
+
+  const secret = randomBytes(32).toString("hex");
+  try {
+    mkdirSync(dirname(secretPath), { recursive: true });
+    writeFileSync(secretPath, secret, { mode: 0o600 });
+    console.log(`Generated JWT secret at ${secretPath}`);
+  } catch (error) {
+    console.warn("Could not persist JWT secret; sessions will end on restart:", error instanceof Error ? error.message : "Unknown error");
+  }
+  return secret;
+}
+
+const JWT_SECRET = loadJwtSecret();
 const MIME_TYPES = new Map([
   [".css", "text/css; charset=utf-8"],
   [".html", "text/html; charset=utf-8"],
@@ -41,13 +68,19 @@ function base64UrlDecode(data) {
   return Buffer.from(base64, "base64").toString("utf8");
 }
 
+function base64UrlToBuffer(data) {
+  let base64 = data.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = base64.length % 4;
+  if (pad) base64 += "=".repeat(4 - pad);
+  return Buffer.from(base64, "base64");
+}
+
 function signJwt(payload) {
   const header = base64UrlEncode(JSON.stringify({ alg: "HS256", typ: "JWT" }));
   const body = base64UrlEncode(JSON.stringify(payload));
   const signatureInput = `${header}.${body}`;
-  const signature = createHash("sha256").update(`${signatureInput}.${JWT_SECRET}`).digest();
-  const encodedSig = base64UrlEncode(signature);
-  return `${signatureInput}.${encodedSig}`;
+  const signature = createHmac("sha256", JWT_SECRET).update(signatureInput).digest();
+  return `${signatureInput}.${base64UrlEncode(signature)}`;
 }
 
 function verifyJwt(token) {
@@ -55,9 +88,14 @@ function verifyJwt(token) {
     const [header, body, signature] = token.split(".");
     if (!header || !body || !signature) return null;
     const signatureInput = `${header}.${body}`;
-    const expectedSignature = createHash("sha256").update(`${signatureInput}.${JWT_SECRET}`).digest();
-    const encodedExpected = base64UrlEncode(expectedSignature);
-    if (encodedExpected !== signature) return null;
+    const expectedSignature = createHmac("sha256", JWT_SECRET).update(signatureInput).digest();
+    const providedSignature = base64UrlToBuffer(signature);
+    if (
+      providedSignature.length !== expectedSignature.length ||
+      !timingSafeEqual(providedSignature, expectedSignature)
+    ) {
+      return null;
+    }
     const payload = JSON.parse(base64UrlDecode(body));
     if (payload.exp && payload.exp < Date.now()) return null;
     return payload;
@@ -189,7 +227,6 @@ export function createServer({
 } = {}) {
   if (!store) throw new Error("A recipe store is required.");
   const rateLimits = new Map();
-  const inFlight = new Map();
 
   // Serial job queue - processes one job at a time across all users
   const jobQueue = [];
@@ -256,6 +293,44 @@ export function createServer({
       // Process asynchronously
       processQueue();
     }
+  }
+
+  function clientAddress(request) {
+    const forwarded = request.headers["cf-connecting-ip"] || request.headers["x-forwarded-for"];
+    const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+    return value?.split(",")[0].trim() || request.socket.remoteAddress || "unknown";
+  }
+
+  function checkImportRateLimit(request) {
+    const key = clientAddress(request);
+    const timestamp = now();
+    const entry = rateLimits.get(key);
+
+    if (!entry || timestamp - entry.start >= IMPORT_WINDOW_MS) {
+      rateLimits.set(key, { start: timestamp, count: 1 });
+      return;
+    }
+    if (entry.count >= IMPORT_LIMIT) {
+      throw new HttpError(429, "Too many imports from this connection. Try again later.");
+    }
+    entry.count += 1;
+
+    if (rateLimits.size > 1000) {
+      for (const [address, limit] of rateLimits) {
+        if (timestamp - limit.start >= IMPORT_WINDOW_MS) rateLimits.delete(address);
+      }
+    }
+  }
+
+  // Re-enqueue jobs that were pending or mid-extraction when the process stopped.
+  try {
+    for (const job of store.listRecoverableExtractionJobs()) {
+      store.updateExtractionJob(job.id, { status: "pending", stage: "queued", progress: 0, errorMessage: null });
+      console.log(`[queue] Recovered job ${job.id} for ${job.url}`);
+      enqueueJob(job.id, job.url, job.createdBy);
+    }
+  } catch (error) {
+    console.error("[queue] Could not recover pending jobs:", error instanceof Error ? error.message : "Unknown error");
   }
 
   async function handleRequest(request, response) {
@@ -391,6 +466,9 @@ export function createServer({
         });
       }
 
+      // Only count real extraction work against the per-connection limit.
+      checkImportRateLimit(request);
+
       // Create new extraction job
       const job = store.createExtractionJob(url, userId);
 
@@ -432,8 +510,17 @@ export function createServer({
     const deleteMatch = pathname.match(/^\/api\/recipes\/([^/]+)$/);
     if (deleteMatch && request.method === "DELETE") {
       checkSameOrigin(request);
-      const deleted = store.deleteRecipe(deleteMatch[1]);
-      if (!deleted) return jsonResponse(response, 404, { error: "Recipe not found." });
+      const userId = extractUserId(request);
+      if (!userId) return jsonResponse(response, 401, { error: "Authentication required." });
+
+      const owner = store.getRecipeOwner(deleteMatch[1]);
+      if (owner === undefined) return jsonResponse(response, 404, { error: "Recipe not found." });
+      // Legacy recipes have no owner; any signed-in user may remove them.
+      if (owner && owner !== userId) {
+        return jsonResponse(response, 403, { error: "Only the recipe's creator can delete it." });
+      }
+
+      store.deleteRecipe(deleteMatch[1]);
       return jsonResponse(response, 200, { ok: true });
     }
 
@@ -446,11 +533,13 @@ export function createServer({
     }
 
     if (pathname === "/api/favorites" && request.method === "POST") {
+      checkSameOrigin(request);
       const userId = extractUserId(request);
       if (!userId) return jsonResponse(response, 401, { error: "Authentication required." });
-      const body = await parseBody(request);
-      const { recipeId } = body;
+      const body = await readJson(request);
+      const recipeId = body?.recipeId?.toString();
       if (!recipeId) return jsonResponse(response, 400, { error: "recipeId is required." });
+      if (!store.getRecipe(recipeId)) return jsonResponse(response, 404, { error: "Recipe not found." });
       const added = store.addFavorite(userId, recipeId);
       return jsonResponse(response, 200, { added, recipeId });
     }
@@ -464,12 +553,25 @@ export function createServer({
       return jsonResponse(response, 200, { ok: true, recipeId });
     }
 
-    // History endpoint
+    // History endpoints
     if (pathname === "/api/history" && request.method === "GET") {
       const userId = extractUserId(request);
       if (!userId) return jsonResponse(response, 401, { error: "Authentication required." });
       const history = store.getUserHistory(userId);
       return jsonResponse(response, 200, { history });
+    }
+
+    if (pathname === "/api/history" && request.method === "POST") {
+      checkSameOrigin(request);
+      const userId = extractUserId(request);
+      if (!userId) return jsonResponse(response, 401, { error: "Authentication required." });
+      const body = await readJson(request);
+      const recipeId = body?.recipeId?.toString();
+      if (!recipeId) return jsonResponse(response, 400, { error: "recipeId is required." });
+      if (!store.getRecipe(recipeId)) return jsonResponse(response, 404, { error: "Recipe not found." });
+      const action = body?.action === "updated" ? "updated" : "added";
+      store.addToHistory(userId, recipeId, action);
+      return jsonResponse(response, 200, { ok: true, recipeId, action });
     }
 
     if (pathname.startsWith("/api/")) {

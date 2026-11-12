@@ -1,5 +1,5 @@
 {
-  "hash": "7172f44",
-  "date": "2026-11-11 08:59:27 -0600",
-  "message": "Add auto-update prompt for PWA; fix forgot password notice message"
+  "hash": "cd9fe26",
+  "date": "2026-11-11 09:15:31 -0600",
+  "message": "Add version banner at top; console version logging on refresh"
 }
