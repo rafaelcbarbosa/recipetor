@@ -52,6 +52,8 @@ export function testConfig(overrides: Partial<BridgeConfig> = {}): BridgeConfig 
     rateLimit: 100,
     rateWindowMs: 60_000,
     hermesBin: "hermes",
+    verbose: false,
+    progressIntervalMs: 15_000,
     ...overrides,
   };
 }

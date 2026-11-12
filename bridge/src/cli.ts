@@ -15,6 +15,8 @@ Environment:
   BRIDGE_PROVIDER    optional Hermes provider override
   BRIDGE_TIMEOUT_MS  per-attempt timeout (default 180000)
   BRIDGE_MAX_ATTEMPTS retry count (default 2)
+  BRIDGE_VERBOSE     log progress while waiting (default true)
+  BRIDGE_PROGRESS_INTERVAL_MS  heartbeat interval (default 15000)
   HERMES_BIN         Hermes executable (default "hermes")`;
 
 async function main(): Promise<void> {
@@ -43,11 +45,18 @@ async function main(): Promise<void> {
     return;
   }
 
+  const onLog = config.verbose ? (message: string) => console.error(message) : undefined;
   const adapter = createHermesAdapter({
     binary: config.hermesBin,
     model: config.model || null,
     provider: config.provider || null,
+    onLog,
+    progressIntervalMs: config.progressIntervalMs,
   });
+
+  onLog?.(
+    `Bridge backend=${config.backend} model=${config.model || "hermes-default"} provider=${config.provider || "hermes-default"} timeout=${Math.round(config.timeoutMs / 1000)}s attempts=${config.maxAttempts}`,
+  );
 
   try {
     const result = await extractRecipe({

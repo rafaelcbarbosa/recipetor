@@ -14,6 +14,10 @@ export interface HermesAdapterOptions {
   model?: string | null;
   provider?: string | null;
   maxOutputBytes?: number;
+  /** Receives progress messages while Hermes runs. Omit to stay quiet. */
+  onLog?: (message: string) => void;
+  /** How often to report that Hermes is still running. Defaults to 15s. */
+  progressIntervalMs?: number;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -90,14 +94,23 @@ function sanitizeStderr(stderr: string): string {
   return stderr.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ").trim();
 }
 
-function runHermes(
-  binary: string,
-  args: string[],
-  timeoutMs: number,
-  maxOutputBytes: number,
-  signal?: AbortSignal,
-): Promise<string> {
+interface RunHermesOptions {
+  timeoutMs: number;
+  maxOutputBytes: number;
+  signal?: AbortSignal;
+  onLog?: (message: string) => void;
+  progressIntervalMs?: number;
+  description: string;
+}
+
+function runHermes(binary: string, args: string[], options: RunHermesOptions): Promise<string> {
+  const { timeoutMs, maxOutputBytes, signal, onLog, description } = options;
+  const startedAt = Date.now();
+  const elapsed = () => ((Date.now() - startedAt) / 1000).toFixed(1);
+
   return new Promise((resolve, reject) => {
+    onLog?.(`[hermes] starting: ${description} timeout=${Math.round(timeoutMs / 1000)}s`);
+
     const child = spawn(binary, args, {
       cwd: tmpdir(),
       env: process.env,
@@ -109,11 +122,13 @@ function runHermes(
     let stdout = "";
     let stderr = "";
     let stdoutBytes = 0;
+    let firstOutput = false;
     let timedOut = false;
     let overflow = false;
     let aborted = false;
     let forceKill: NodeJS.Timeout | undefined;
     let timeout: NodeJS.Timeout | undefined;
+    let progress: NodeJS.Timeout | undefined;
 
     function terminate(terminationSignal: NodeJS.Signals) {
       try {
@@ -137,6 +152,7 @@ function runHermes(
     function cleanup() {
       if (timeout) clearTimeout(timeout);
       if (forceKill) clearTimeout(forceKill);
+      if (progress) clearInterval(progress);
       signal?.removeEventListener("abort", onAbort);
     }
 
@@ -147,8 +163,21 @@ function runHermes(
 
     timeout = setTimeout(() => {
       timedOut = true;
+      onLog?.(`[hermes] timed out after ${elapsed()}s; terminating process`);
       stopChild();
     }, timeoutMs);
+
+    const progressIntervalMs = options.progressIntervalMs ?? 15_000;
+    if (onLog && progressIntervalMs > 0) {
+      progress = setInterval(() => {
+        const state =
+          stdoutBytes > 0
+            ? `${stdoutBytes} bytes of output received`
+            : "waiting for Hermes to fetch the post and return JSON";
+        onLog(`[hermes] still running after ${elapsed()}s (${state})`);
+      }, progressIntervalMs);
+      progress.unref();
+    }
 
     if (signal) {
       if (signal.aborted) {
@@ -160,6 +189,10 @@ function runHermes(
 
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
+      if (!firstOutput && chunk.length > 0) {
+        firstOutput = true;
+        onLog?.(`[hermes] first output after ${elapsed()}s`);
+      }
       stdoutBytes += Buffer.byteLength(chunk);
       if (stdoutBytes > maxOutputBytes) {
         if (!overflow) {
@@ -180,6 +213,7 @@ function runHermes(
 
     child.once("error", (error) => {
       cleanup();
+      onLog?.(`[hermes] failed to start after ${elapsed()}s: ${error.message}`);
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOENT") {
         reject(
@@ -196,6 +230,7 @@ function runHermes(
     child.once("close", (code) => {
       cleanup();
       if (aborted) {
+        onLog?.(`[hermes] cancelled after ${elapsed()}s`);
         reject(
           new BridgeError("MODEL_ERROR", "The extraction was cancelled.", {
             retryable: false,
@@ -204,10 +239,12 @@ function runHermes(
         return;
       }
       if (timedOut) {
+        onLog?.(`[hermes] process ended after timeout at ${elapsed()}s`);
         reject(new BridgeError("MODEL_TIMEOUT", "The recipe extractor timed out."));
         return;
       }
       if (overflow) {
+        onLog?.(`[hermes] output exceeded ${maxOutputBytes} bytes after ${elapsed()}s`);
         reject(
           new BridgeError("MODEL_ERROR", "The model response exceeded the size limit.", {
             retryable: false,
@@ -217,6 +254,9 @@ function runHermes(
       }
       if (code !== 0) {
         const detail = sanitizeStderr(stderr);
+        onLog?.(
+          `[hermes] exited with code ${code} after ${elapsed()}s${detail ? `: ${detail}` : ""}`,
+        );
         reject(
           new BridgeError(
             "MODEL_ERROR",
@@ -225,6 +265,9 @@ function runHermes(
         );
         return;
       }
+      onLog?.(
+        `[hermes] finished code=0 after ${elapsed()}s (stdout=${stdoutBytes} bytes, stderr=${stderr.length} chars)`,
+      );
       resolve(stdout);
     });
   });
@@ -260,6 +303,8 @@ export function createHermesAdapter(options: HermesAdapterOptions = {}): Extract
   const model = options.model || null;
   const provider = options.provider || null;
   const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+  const onLog = options.onLog;
+  const progressIntervalMs = options.progressIntervalMs;
 
   return {
     name: "hermes",
@@ -271,14 +316,21 @@ export function createHermesAdapter(options: HermesAdapterOptions = {}): Extract
       if (model) args.push("-m", model);
       if (provider) args.push("--provider", provider);
 
-      const output = await runHermes(
-        binary,
-        args,
-        extractOptions.timeoutMs,
+      const output = await runHermes(binary, args, {
+        timeoutMs: extractOptions.timeoutMs,
         maxOutputBytes,
-        extractOptions.signal,
+        signal: extractOptions.signal,
+        onLog,
+        progressIntervalMs,
+        description: `url=${url} model=${model ?? "hermes-default"} provider=${provider ?? "hermes-default"}`,
+      });
+
+      onLog?.(`[hermes] parsing ${output.length} characters of model output`);
+      const recipe = parseOutput(output);
+      onLog?.(
+        `[hermes] parsed recipe "${recipe.title}" (${recipe.ingredients.length} ingredients, ${recipe.instructions.length} steps)`,
       );
-      return parseOutput(output);
+      return recipe;
     },
 
     async isAvailable(): Promise<boolean> {

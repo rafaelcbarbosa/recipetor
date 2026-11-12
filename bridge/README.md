@@ -44,6 +44,8 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 | `BRIDGE_RATE_LIMIT` | `30` | Global requests per window. `0` disables it. |
 | `BRIDGE_RATE_WINDOW_MS` | `3600000` | Rate-limit window. |
 | `HERMES_BIN` | `hermes` | Hermes executable. Use an absolute path for systemd. |
+| `BRIDGE_VERBOSE` | `true` | Log extraction progress and heartbeats. |
+| `BRIDGE_PROGRESS_INTERVAL_MS` | `15000` | How often to log that Hermes is still running. |
 
 The app's `RECIPE_BRIDGE_TIMEOUT_MS` should be larger than
 `BRIDGE_TIMEOUT_MS * BRIDGE_MAX_ATTEMPTS`, because the app waits for the bridge
@@ -159,9 +161,12 @@ The CLI reads `bridge/.env` when present. If you have not created it, pass the
 model and provider inline so it does not fall back to the Hermes defaults:
 
 ```sh
-BRIDGE_MODEL=poolside/laguna-xs-2.1 BRIDGE_PROVIDER=nvidia \
+BRIDGE_MODEL=nvidia/nemotron-3.5-lightning-30b-a3b BRIDGE_PROVIDER=nvidia \
   npm run cli -- "https://www.instagram.com/reel/ABC123/"
 ```
+
+Progress messages go to stderr, so stdout stays valid JSON. Set
+`BRIDGE_VERBOSE=false` to silence them.
 
 ## Change the model
 
@@ -169,7 +174,7 @@ Model choice lives entirely in the bridge:
 
 ```sh
 # /etc/recipetor-bridge.env
-BRIDGE_MODEL=poolside/laguna-xs-2.1
+BRIDGE_MODEL=nvidia/nemotron-3.5-lightning-30b-a3b
 BRIDGE_PROVIDER=nvidia
 ```
 
@@ -185,24 +190,43 @@ The health response includes the configured `model` and `provider`.
 Leave both values empty to use the model/provider configured by `hermes model`.
 The app does not need to be redeployed.
 
-### Pick a fast model
+### Pick a model
 
-Extraction is one short tool call followed by one JSON response. Reasoning-heavy
-models can spend thousands of hidden reasoning tokens before writing that JSON;
-a single extraction can then take several minutes and hit `BRIDGE_TIMEOUT_MS`.
-Check the model's behavior before deploying it:
+Extraction is one short tool call followed by one JSON response. Some models
+spend thousands of hidden reasoning tokens before writing that JSON, so a single
+extraction can take several minutes. Check the model's behavior before deploying
+it:
 
 ```sh
 npm run cli -- "https://www.instagram.com/reel/ABC123/"
 ```
 
-The `meta.durationMs` field shows the end-to-end time. On the NVIDIA NIM free
-tier, `poolside/laguna-xs-2.1` completes real extractions in about 10 seconds
-and emits no reasoning tokens. `nvidia/nemotron-3.5-lightning-30b-a3b` is much
-slower because it reasons for thousands of tokens first.
+The `meta.durationMs` field shows the end-to-end time.
+
+On the NVIDIA NIM free tier:
+
+- `nvidia/nemotron-3.5-lightning-30b-a3b` (current) reasons heavily and usually
+  takes 1–2 minutes per post, but can take longer. Give it a large
+  `BRIDGE_TIMEOUT_MS` (for example `900000`) and keep a retry
+  (`BRIDGE_MAX_ATTEMPTS=2`) because it occasionally returns an empty
+  instruction list.
+- `poolside/laguna-xs-2.1` finishes in about 10 seconds with no reasoning
+  tokens, but often leaves per-ingredient nutrition empty.
+
+With a slow model, `BRIDGE_VERBOSE=true` logs a heartbeat every
+`BRIDGE_PROGRESS_INTERVAL_MS` so you can see that the call is still alive:
+
+```text
+[hermes] starting: url=... model=nvidia/nemotron-3.5-lightning-30b-a3b ... timeout=900s
+[hermes] still running after 15.0s (no output yet)
+[hermes] still running after 30.0s (no output yet)
+[hermes] first output after 284.6s
+[hermes] finished code=0 after 284.6s (stdout=2311 bytes, stderr=0 chars)
+[hermes] parsed recipe "..." (13 ingredients, 8 steps)
+```
 
 If the chosen model is unavailable, the bridge returns `MODEL_ERROR`; point
-`BRIDGE_MODEL`/`BRIDGE_PROVIDER` at another fast model and restart.
+`BRIDGE_MODEL`/`BRIDGE_PROVIDER` at another model and restart.
 
 ## Run the tests
 

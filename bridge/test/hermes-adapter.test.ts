@@ -32,6 +32,27 @@ test("parses a recipe from noisy stdout", async () => {
   assert.equal(recipe.ingredients.length, 2);
 });
 
+test("reports progress while Hermes is running", async () => {
+  const output = JSON.stringify(RECIPE);
+  const fake = fakeHermes(
+    `setTimeout(() => process.stdout.write(${JSON.stringify(output)}), 120);`,
+  );
+  const messages: string[] = [];
+  const adapter = createHermesAdapter({
+    binary: fake.path,
+    onLog: (message) => messages.push(message),
+    progressIntervalMs: 30,
+  });
+
+  const recipe = await adapter.extract(URL, { timeoutMs: 5000 });
+  assert.equal(recipe.title, RECIPE.title);
+  assert.ok(messages.some((message) => message.includes("starting:")));
+  assert.ok(messages.some((message) => message.includes("still running")));
+  assert.ok(messages.some((message) => message.includes("first output")));
+  assert.ok(messages.some((message) => message.includes("finished code=0")));
+  assert.ok(messages.some((message) => message.includes("parsed recipe")));
+});
+
 test("parses JSON wrapped in a markdown fence with an extra closing brace", async () => {
   const output = `\`\`\`json\n${JSON.stringify(RECIPE)}}\n\`\`\``;
   const fake = fakeHermes(`process.stdout.write(${JSON.stringify(output)});`);

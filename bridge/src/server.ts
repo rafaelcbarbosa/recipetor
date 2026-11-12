@@ -78,6 +78,14 @@ class Semaphore {
     this.max = max;
   }
 
+  get activeCount(): number {
+    return this.active;
+  }
+
+  get queuedCount(): number {
+    return this.waiting.length;
+  }
+
   async run<T>(task: () => Promise<T>): Promise<T> {
     await this.acquire();
     try {
@@ -173,8 +181,15 @@ export function createBridgeServer({
     response.on("close", onClose);
 
     try {
-      const result: ExtractionResult = await limiter.run(() =>
-        extractRecipe({
+      logger.info(
+        `[extract] ${url} accepted (active=${limiter.activeCount}, queued=${limiter.queuedCount}, timeout=${Math.round(config.timeoutMs / 1000)}s, attempts=${config.maxAttempts})`,
+      );
+      const queuedAt = Date.now();
+      const result: ExtractionResult = await limiter.run(() => {
+        logger.info(
+          `[extract] ${url} started after ${((Date.now() - queuedAt) / 1000).toFixed(1)}s`,
+        );
+        return extractRecipe({
           adapter,
           url,
           timeoutMs: config.timeoutMs,
@@ -185,8 +200,8 @@ export function createBridgeServer({
               `[extract] ${url} attempt ${attempt} failed (${error.code}): ${error.message}; retrying`,
             );
           },
-        }),
-      );
+        });
+      });
 
       sendJson(response, 200, result);
       logger.info(
@@ -279,6 +294,8 @@ if (invokedPath === fileURLToPath(import.meta.url)) {
       binary: config.hermesBin,
       model: config.model || null,
       provider: config.provider || null,
+      onLog: config.verbose ? (message) => console.log(message) : undefined,
+      progressIntervalMs: config.progressIntervalMs,
     });
     const server = startBridgeServer(config, adapter);
 

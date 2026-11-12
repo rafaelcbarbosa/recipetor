@@ -33,17 +33,21 @@ BRIDGE_TOKEN=<long random value>
 HERMES_BIN=/home/coxinha/.local/bin/hermes
 ```
 
-Set a fast model explicitly:
+Set the model explicitly:
 
 ```sh
-BRIDGE_MODEL=poolside/laguna-xs-2.1
+BRIDGE_MODEL=nvidia/nemotron-3.5-lightning-30b-a3b
 BRIDGE_PROVIDER=nvidia
+BRIDGE_TIMEOUT_MS=900000
+BRIDGE_MAX_ATTEMPTS=2
+BRIDGE_VERBOSE=true
 ```
 
-Prefer a model that does not emit long hidden reasoning. Reasoning-heavy models
-can spend minutes thinking before returning the JSON and exceed
-`BRIDGE_TIMEOUT_MS`. Leaving `BRIDGE_MODEL`/`BRIDGE_PROVIDER` empty uses the
-model/provider configured by `hermes model`.
+This model reasons heavily and can take several minutes per post, so it needs a
+large timeout. Retries are useful because it occasionally returns an empty
+instruction list. For a much faster extraction, use `poolside/laguna-xs-2.1`
+instead. Leaving `BRIDGE_MODEL`/`BRIDGE_PROVIDER` empty uses the model/provider
+configured by `hermes model`.
 
 Start it:
 
@@ -69,7 +73,7 @@ Add the bridge settings to the app's `.env`:
 RECIPE_EXTRACTOR=bridge
 RECIPE_BRIDGE_URL=http://127.0.0.1:8790
 RECIPE_BRIDGE_TOKEN=<same token as the bridge>
-RECIPE_BRIDGE_TIMEOUT_MS=400000
+RECIPE_BRIDGE_TIMEOUT_MS=1860000
 ```
 
 `RECIPE_BRIDGE_TIMEOUT_MS` should exceed
@@ -132,8 +136,11 @@ Model choice lives in the bridge, not the app:
 
 ```sh
 # /etc/recipetor-bridge.env
-BRIDGE_MODEL=poolside/laguna-xs-2.1
+BRIDGE_MODEL=nvidia/nemotron-3.5-lightning-30b-a3b
 BRIDGE_PROVIDER=nvidia
+BRIDGE_TIMEOUT_MS=900000
+BRIDGE_MAX_ATTEMPTS=2
+BRIDGE_VERBOSE=true
 ```
 
 ```sh
@@ -152,9 +159,24 @@ npm run cli -- "https://www.instagram.com/reel/ABC123/"
 ```
 
 `meta.durationMs` shows the end-to-end time. The NVIDIA NIM
-`poolside/laguna-xs-2.1` model completes real extractions in about 10 seconds;
-`nvidia/nemotron-3.5-lightning-30b-a3b` reasons for thousands of tokens and can
-take several minutes.
+`nvidia/nemotron-3.5-lightning-30b-a3b` model reasons for thousands of tokens
+and can take 5–10 minutes. `poolside/laguna-xs-2.1` completes real extractions
+in about 10 seconds but often omits per-ingredient nutrition.
+
+While a slow call runs, `BRIDGE_VERBOSE=true` logs a heartbeat to the journal:
+
+```sh
+sudo journalctl -u recipetor-bridge -f
+```
+
+```text
+[extract] https://... accepted (active=0, queued=0, timeout=900s, attempts=1)
+[hermes] starting: url=https://... model=nvidia/nemotron-3.5-lightning-30b-a3b ... timeout=900s
+[hermes] still running after 15.0s (no output yet)
+[hermes] first output after 284.6s
+[hermes] finished code=0 after 284.6s (stdout=2311 bytes, stderr=0 chars)
+[extract] https://... ok backend=hermes model=... attempts=1 duration=284700ms
+```
 
 ## Testing
 

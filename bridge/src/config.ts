@@ -13,6 +13,17 @@ export interface BridgeConfig {
   rateLimit: number;
   rateWindowMs: number;
   hermesBin: string;
+  verbose: boolean;
+  progressIntervalMs: number;
+}
+
+function parseBoolean(env: NodeJS.ProcessEnv, name: string, fallback: boolean): boolean {
+  const raw = env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const value = raw.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(value)) return true;
+  if (["0", "false", "no", "off"].includes(value)) return false;
+  throw new Error(`${name} must be true or false.`);
 }
 
 function parseInteger(
@@ -50,6 +61,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     rateLimit: parseInteger(env, "BRIDGE_RATE_LIMIT", 30, 0, 100_000),
     rateWindowMs: parseInteger(env, "BRIDGE_RATE_WINDOW_MS", 3_600_000, 1_000, 86_400_000),
     hermesBin: (env.HERMES_BIN || "").trim() || "hermes",
+    verbose: parseBoolean(env, "BRIDGE_VERBOSE", true),
+    progressIntervalMs: parseInteger(
+      env,
+      "BRIDGE_PROGRESS_INTERVAL_MS",
+      15_000,
+      1_000,
+      300_000,
+    ),
   };
 }
 

@@ -16,6 +16,8 @@ test("uses safe bridge defaults", () => {
   assert.equal(config.rateLimit, 30);
   assert.equal(config.rateWindowMs, 3_600_000);
   assert.equal(config.hermesBin, "hermes");
+  assert.equal(config.verbose, true);
+  assert.equal(config.progressIntervalMs, 15_000);
 });
 
 test("reads overrides from the environment", () => {
@@ -31,6 +33,8 @@ test("reads overrides from the environment", () => {
     BRIDGE_RATE_LIMIT: "10",
     BRIDGE_RATE_WINDOW_MS: "120000",
     HERMES_BIN: "/opt/hermes",
+    BRIDGE_VERBOSE: "false",
+    BRIDGE_PROGRESS_INTERVAL_MS: "5000",
   });
   assert.equal(config.host, "0.0.0.0");
   assert.equal(config.port, 9000);
@@ -43,6 +47,8 @@ test("reads overrides from the environment", () => {
   assert.equal(config.rateLimit, 10);
   assert.equal(config.rateWindowMs, 120_000);
   assert.equal(config.hermesBin, "/opt/hermes");
+  assert.equal(config.verbose, false);
+  assert.equal(config.progressIntervalMs, 5_000);
 });
 
 test("rejects unsupported backends", () => {
@@ -53,6 +59,7 @@ test("rejects out-of-range numbers", () => {
   assert.throws(() => loadConfig({ BRIDGE_PORT: "0" }), /BRIDGE_PORT/);
   assert.throws(() => loadConfig({ BRIDGE_PORT: "abc" }), /BRIDGE_PORT/);
   assert.throws(() => loadConfig({ BRIDGE_MAX_ATTEMPTS: "9" }), /BRIDGE_MAX_ATTEMPTS/);
+  assert.throws(() => loadConfig({ BRIDGE_VERBOSE: "maybe" }), /BRIDGE_VERBOSE/);
 });
 
 test("requires a non-example token", () => {
