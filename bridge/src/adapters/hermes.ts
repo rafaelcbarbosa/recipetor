@@ -22,19 +22,56 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function findJsonObjectEnd(output: string, start: number): number | null {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < output.length; index += 1) {
+    const char = output[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+    } else if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return null;
+}
+
 function parseJsonResponse(output: string): unknown {
-  const start = output.indexOf("{");
-  const end = output.lastIndexOf("}");
-  if (start < 0 || end < start) {
+  // Models sometimes wrap the object in a markdown fence, add a trailing
+  // sentence, or emit an extra closing brace. Walk to the first balanced
+  // object instead of assuming the last brace belongs to it.
+  let start = output.indexOf("{");
+  let sawObject = false;
+
+  while (start >= 0) {
+    sawObject = true;
+    const end = findJsonObjectEnd(output, start);
+    if (end !== null) {
+      try {
+        return JSON.parse(output.slice(start, end + 1));
+      } catch {
+        // Keep looking: the model may have emitted prose containing braces
+        // before the actual JSON object.
+      }
+    }
+    start = output.indexOf("{", start + 1);
+  }
+
+  if (!sawObject) {
     throw new BridgeError("INVALID_MODEL_OUTPUT", "The extractor returned no JSON object.");
   }
-  try {
-    return JSON.parse(output.slice(start, end + 1));
-  } catch (error) {
-    throw new BridgeError("INVALID_MODEL_OUTPUT", "The extractor returned invalid JSON.", {
-      cause: error,
-    });
-  }
+  throw new BridgeError("INVALID_MODEL_OUTPUT", "The extractor returned invalid JSON.");
 }
 
 function errorSignal(value: unknown): BridgeError | null {

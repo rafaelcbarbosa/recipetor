@@ -155,14 +155,22 @@ npm run cli -- "https://www.instagram.com/reel/ABC123/"
 
 It prints `{ "recipe": ..., "meta": ... }` or exits non-zero with the error code.
 
+The CLI reads `bridge/.env` when present. If you have not created it, pass the
+model and provider inline so it does not fall back to the Hermes defaults:
+
+```sh
+BRIDGE_MODEL=poolside/laguna-xs-2.1 BRIDGE_PROVIDER=nvidia \
+  npm run cli -- "https://www.instagram.com/reel/ABC123/"
+```
+
 ## Change the model
 
 Model choice lives entirely in the bridge:
 
 ```sh
 # /etc/recipetor-bridge.env
-BRIDGE_MODEL=claude-sonnet-4
-BRIDGE_PROVIDER=anthropic
+BRIDGE_MODEL=poolside/laguna-xs-2.1
+BRIDGE_PROVIDER=nvidia
 ```
 
 Then restart the service:
@@ -172,8 +180,29 @@ sudo systemctl restart recipetor-bridge
 curl -s http://127.0.0.1:8790/health
 ```
 
+The health response includes the configured `model` and `provider`.
+
 Leave both values empty to use the model/provider configured by `hermes model`.
 The app does not need to be redeployed.
+
+### Pick a fast model
+
+Extraction is one short tool call followed by one JSON response. Reasoning-heavy
+models can spend thousands of hidden reasoning tokens before writing that JSON;
+a single extraction can then take several minutes and hit `BRIDGE_TIMEOUT_MS`.
+Check the model's behavior before deploying it:
+
+```sh
+npm run cli -- "https://www.instagram.com/reel/ABC123/"
+```
+
+The `meta.durationMs` field shows the end-to-end time. On the NVIDIA NIM free
+tier, `poolside/laguna-xs-2.1` completes real extractions in about 10 seconds
+and emits no reasoning tokens. `nvidia/nemotron-3.5-lightning-30b-a3b` is much
+slower because it reasons for thousands of tokens first.
+
+If the chosen model is unavailable, the bridge returns `MODEL_ERROR`; point
+`BRIDGE_MODEL`/`BRIDGE_PROVIDER` at another fast model and restart.
 
 ## Run the tests
 

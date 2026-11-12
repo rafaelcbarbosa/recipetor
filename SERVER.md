@@ -33,7 +33,16 @@ BRIDGE_TOKEN=<long random value>
 HERMES_BIN=/home/coxinha/.local/bin/hermes
 ```
 
-`BRIDGE_MODEL` and `BRIDGE_PROVIDER` are optional. Leave them empty to use the
+Set a fast model explicitly:
+
+```sh
+BRIDGE_MODEL=poolside/laguna-xs-2.1
+BRIDGE_PROVIDER=nvidia
+```
+
+Prefer a model that does not emit long hidden reasoning. Reasoning-heavy models
+can spend minutes thinking before returning the JSON and exceed
+`BRIDGE_TIMEOUT_MS`. Leaving `BRIDGE_MODEL`/`BRIDGE_PROVIDER` empty uses the
 model/provider configured by `hermes model`.
 
 Start it:
@@ -123,8 +132,8 @@ Model choice lives in the bridge, not the app:
 
 ```sh
 # /etc/recipetor-bridge.env
-BRIDGE_MODEL=claude-sonnet-4
-BRIDGE_PROVIDER=anthropic
+BRIDGE_MODEL=poolside/laguna-xs-2.1
+BRIDGE_PROVIDER=nvidia
 ```
 
 ```sh
@@ -134,6 +143,18 @@ curl -s http://127.0.0.1:8790/health
 
 The app does not need to be rebuilt or restarted. The health response shows the
 active model and provider.
+
+Check the model before deploying it with the bridge CLI:
+
+```sh
+cd bridge
+npm run cli -- "https://www.instagram.com/reel/ABC123/"
+```
+
+`meta.durationMs` shows the end-to-end time. The NVIDIA NIM
+`poolside/laguna-xs-2.1` model completes real extractions in about 10 seconds;
+`nvidia/nemotron-3.5-lightning-30b-a3b` reasons for thousands of tokens and can
+take several minutes.
 
 ## Testing
 

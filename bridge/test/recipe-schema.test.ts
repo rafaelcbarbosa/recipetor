@@ -33,6 +33,22 @@ test("accepts missing optional nutrition and totals", () => {
   });
 });
 
+test("normalizes an all-null totals object to null", () => {
+  const recipe = validateRecipe({
+    ...RECIPE,
+    totals: { calories: null, protein: null, carbs: null, fat: null },
+  });
+  assert.equal(recipe.totals, null);
+});
+
+test("keeps totals when at least one value is known", () => {
+  const recipe = validateRecipe({
+    ...RECIPE,
+    totals: { calories: 219, protein: null, carbs: null, fat: null },
+  });
+  assert.deepEqual(recipe.totals, { calories: 219, protein: null, carbs: null, fat: null });
+});
+
 test("rejects unusable recipes with INVALID_MODEL_OUTPUT", () => {
   const cases = [
     null,

@@ -150,6 +150,17 @@ export function validateRecipe(value: unknown): Recipe {
         fat: validateNutrition(totalsRecord.fat, "total fat"),
       }
     : null;
+  // Models often return a totals object with every field null when the source
+  // has no nutrition data. Treat that as "unknown" so the app can compute it
+  // from ingredients instead of rendering null values.
+  const normalizedTotals =
+    totals &&
+    totals.calories === null &&
+    totals.protein === null &&
+    totals.carbs === null &&
+    totals.fat === null
+      ? null
+      : totals;
 
   const instructions = record.instructions.map((item) => boundedString(item, "instruction", 1500));
 
@@ -161,6 +172,6 @@ export function validateRecipe(value: unknown): Recipe {
     basePortions,
     ingredients,
     instructions,
-    totals,
+    totals: normalizedTotals,
   };
 }

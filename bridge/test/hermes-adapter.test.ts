@@ -32,6 +32,34 @@ test("parses a recipe from noisy stdout", async () => {
   assert.equal(recipe.ingredients.length, 2);
 });
 
+test("parses JSON wrapped in a markdown fence with an extra closing brace", async () => {
+  const output = `\`\`\`json\n${JSON.stringify(RECIPE)}}\n\`\`\``;
+  const fake = fakeHermes(`process.stdout.write(${JSON.stringify(output)});`);
+  const adapter = createHermesAdapter({ binary: fake.path });
+
+  const recipe = await adapter.extract(URL, { timeoutMs: 5000 });
+  assert.equal(recipe.title, RECIPE.title);
+});
+
+test("ignores prose after the JSON object", async () => {
+  const output = `Here is the recipe:\n${JSON.stringify(RECIPE)}\nEnjoy!`;
+  const fake = fakeHermes(`process.stdout.write(${JSON.stringify(output)});`);
+  const adapter = createHermesAdapter({ binary: fake.path });
+
+  const recipe = await adapter.extract(URL, { timeoutMs: 5000 });
+  assert.equal(recipe.title, RECIPE.title);
+});
+
+test("rejects a malformed JSON object", async () => {
+  const fake = fakeHermes('process.stdout.write("{not json}");');
+  const adapter = createHermesAdapter({ binary: fake.path });
+
+  await assert.rejects(
+    adapter.extract(URL, { timeoutMs: 5000 }),
+    rejectsWithCode("INVALID_MODEL_OUTPUT", true),
+  );
+});
+
 const ARGS_SCRIPT = [
   'require("node:fs").writeFileSync(require("node:path").join(__dirname, "args.json"), JSON.stringify(process.argv));',
   jsonOutputScript(RECIPE),

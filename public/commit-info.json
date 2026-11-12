@@ -1,5 +1,5 @@
 {
-  "hash": "322a30f",
-  "date": "2026-11-11 18:42:13 -0600",
-  "message": "Fix auth gaps, persist queue, and harden imports"
+  "hash": "ab14714",
+  "date": "2026-11-11 19:23:49 -0600",
+  "message": "Add standalone extraction bridge and wire app to it"
 }

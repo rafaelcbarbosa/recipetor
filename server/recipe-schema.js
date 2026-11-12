@@ -109,6 +109,16 @@ export function validateRecipeResult(value) {
         fat: validateNutrition(value.totals.fat, "total fat", { allowNull: true }),
       }
     : null;
+  // Treat an all-null totals object as unknown so the store computes totals
+  // from ingredients and the UI does not render "null" values.
+  const normalizedTotals =
+    totals &&
+    totals.calories === null &&
+    totals.protein === null &&
+    totals.carbs === null &&
+    totals.fat === null
+      ? null
+      : totals;
 
   const steps = value.instructions.map((item) => boundedString(item, "instruction", 1500));
   const style = CATEGORY_STYLE[category];
@@ -123,6 +133,6 @@ export function validateRecipeResult(value) {
     color: style.color,
     ingredients,
     steps,
-    totals,
+    totals: normalizedTotals,
   };
 }
