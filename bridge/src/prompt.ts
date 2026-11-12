@@ -1,4 +1,4 @@
-export const PROMPT_VERSION = "2026-11-11";
+export const PROMPT_VERSION = "2026-11-12";
 
 /**
  * Builds the one-shot Hermes prompt. The model is asked to return either a
@@ -33,6 +33,8 @@ export function buildPrompt(url: string): string {
     '{"error":"POST_INACCESSIBLE","message":"brief reason"}',
     "If the post is accessible but does not contain a recipe, return only:",
     '{"error":"NO_RECIPE","message":"brief reason"}',
+    "A complete recipe needs both ingredients and cooking steps. If the caption, comments, or video only tease a recipe (for example it lists a few ingredients but gives no quantities and no method, or asks viewers to comment for the recipe), return NO_RECIPE instead of a partial recipe.",
+    "Never return an object with an empty instructions array. If you cannot find at least one real preparation step, return NO_RECIPE.",
     `Instagram URL: ${url}`,
   ].join("\n");
 }

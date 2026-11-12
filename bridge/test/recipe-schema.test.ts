@@ -65,7 +65,6 @@ test("rejects unusable recipes with INVALID_MODEL_OUTPUT", () => {
     { ...RECIPE, ingredients: [] },
     { ...RECIPE, ingredients: [{ amount: -1, unit: "g", name: "flour" }] },
     { ...RECIPE, instructions: [1] },
-    { ...RECIPE, instructions: [] },
     { ...RECIPE, prepTimeMinutes: 0 },
   ];
   for (const value of cases) {
@@ -74,4 +73,12 @@ test("rejects unusable recipes with INVALID_MODEL_OUTPUT", () => {
       (error) => error instanceof BridgeError && error.code === "INVALID_MODEL_OUTPUT",
     );
   }
+});
+
+test("marks a recipe without instructions as INCOMPLETE_RECIPE", () => {
+  assert.throws(
+    () => validateRecipe({ ...RECIPE, instructions: [] }),
+    (error) =>
+      error instanceof BridgeError && error.code === "INCOMPLETE_RECIPE" && error.retryable,
+  );
 });

@@ -97,7 +97,9 @@ function validateIngredientLine(value: unknown): Omit<Ingredient, "nutrition"> {
 
 /**
  * Validates and normalizes a recipe returned by the model. Throws a
- * BridgeError with code INVALID_MODEL_OUTPUT when the shape is not usable.
+ * BridgeError with code INVALID_MODEL_OUTPUT when the shape is not usable, or
+ * INCOMPLETE_RECIPE when it has ingredients but no method (usually a teaser
+ * post), so the bridge can retry and then report NO_RECIPE.
  */
 export function validateRecipe(value: unknown): Recipe {
   const record = asRecord(value);
@@ -129,14 +131,13 @@ export function validateRecipe(value: unknown): Recipe {
     invalid("The extractor returned an invalid ingredient list.");
   }
   // An empty list is almost always a model failure rather than a recipe with
-  // no method. Reject it so the bridge retries instead of saving a stepless
-  // recipe.
-  if (
-    !Array.isArray(record.instructions) ||
-    record.instructions.length < 1 ||
-    record.instructions.length > 40
-  ) {
+  // no method. Mark it retryable so the bridge tries again, and let the
+  // extraction loop resolve it to NO_RECIPE if every attempt is incomplete.
+  if (!Array.isArray(record.instructions) || record.instructions.length > 40) {
     invalid("The extractor returned invalid cooking instructions.");
+  }
+  if (record.instructions.length === 0) {
+    throw new BridgeError("INCOMPLETE_RECIPE", "The extractor returned a recipe without cooking instructions.");
   }
 
   const ingredients = record.ingredients.map((item) => {

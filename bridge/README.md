@@ -142,6 +142,7 @@ Errors always use the same shape:
 | `METHOD_NOT_ALLOWED` | 405 | no | Wrong HTTP method. |
 | `POST_INACCESSIBLE` | 422 | no | Private, deleted, or login-gated post. |
 | `NO_RECIPE` | 422 | no | Post is accessible but has no recipe. |
+| `INCOMPLETE_RECIPE` | 502 | yes | Model returned ingredients but no method; becomes `NO_RECIPE` after retries. |
 | `MODEL_TIMEOUT` | 504 | no | Model exceeded `BRIDGE_TIMEOUT_MS`. |
 | `MODEL_ERROR` | 502 | yes | Hermes or the provider failed. |
 | `INVALID_MODEL_OUTPUT` | 502 | yes | Model returned unparseable or invalid JSON. |

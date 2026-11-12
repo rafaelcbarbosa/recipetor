@@ -72,7 +72,17 @@ export async function extractRecipe({
               { cause: error },
             );
       lastError = bridgeError;
-      if (!bridgeError.retryable || attempt === attempts) throw bridgeError;
+      if (!bridgeError.retryable || attempt === attempts) {
+        // A post that keeps producing ingredients with no method is almost
+        // certainly a teaser rather than a malformed recipe. Surface it as
+        // NO_RECIPE so the app shows a clear message instead of an error.
+        if (bridgeError.code === "INCOMPLETE_RECIPE") {
+          throw new BridgeError("NO_RECIPE", "No complete recipe found in this post.", {
+            cause: bridgeError,
+          });
+        }
+        throw bridgeError;
+      }
       onRetry?.(bridgeError, attempt);
     }
   }
