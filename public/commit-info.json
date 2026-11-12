@@ -1,5 +1,5 @@
 {
-  "hash": "cd9fe26",
-  "date": "2026-11-11 09:15:31 -0600",
-  "message": "Add version banner at top; console version logging on refresh"
+  "hash": "322a30f",
+  "date": "2026-11-11 18:42:13 -0600",
+  "message": "Fix auth gaps, persist queue, and harden imports"
 }

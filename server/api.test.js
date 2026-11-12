@@ -38,7 +38,7 @@ function createTestStore() {
 }
 
 async function startServer(store, options = {}) {
-  const server = createServer({ store, hermesAvailable: () => true, ...options });
+  const server = createServer({ store, extractorAvailable: () => true, ...options });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address();
   return { server, baseUrl: `http://127.0.0.1:${port}` };
@@ -93,6 +93,23 @@ async function waitForJobs(store, expectedCount) {
   }
   throw new Error("Timed out waiting for extraction jobs.");
 }
+
+test("reports extractor health and backend", async () => {
+  const { store, cleanup } = createTestStore();
+  const { server, baseUrl } = await startServer(store, { extractorBackend: "bridge" });
+
+  try {
+    const response = await request(baseUrl, "/api/health");
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.extractorAvailable, true);
+    assert.equal(body.extractor.backend, "bridge");
+  } finally {
+    await stopServer(server);
+    cleanup();
+  }
+});
 
 test("registers, requires email verification, then logs in", async () => {
   const { store, cleanup } = createTestStore();

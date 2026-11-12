@@ -3,6 +3,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createBridgeExtractor, isBridgeAvailable } from "./bridge.js";
 import { createHermesExtractor, isHermesAvailable } from "./hermes.js";
 import { createRecipeStore } from "./recipe-store.js";
 
@@ -219,10 +220,32 @@ function sendFile(filePath, request, response) {
   return true;
 }
 
+function createExtractorFromEnv() {
+  const backend = (process.env.RECIPE_EXTRACTOR || "bridge").trim().toLowerCase();
+  if (backend === "hermes") {
+    return {
+      backend,
+      extractRecipe: createHermesExtractor(),
+      extractorAvailable: () => isHermesAvailable(),
+    };
+  }
+  if (backend !== "bridge") {
+    throw new Error(`Unsupported RECIPE_EXTRACTOR "${backend}". Use "bridge" or "hermes".`);
+  }
+  return {
+    backend,
+    extractRecipe: createBridgeExtractor(),
+    extractorAvailable: () => isBridgeAvailable(),
+  };
+}
+
+const defaultExtractor = createExtractorFromEnv();
+
 export function createServer({
   store,
-  extractRecipe = createHermesExtractor(),
-  hermesAvailable = () => isHermesAvailable(),
+  extractRecipe = defaultExtractor.extractRecipe,
+  extractorAvailable = defaultExtractor.extractorAvailable,
+  extractorBackend = defaultExtractor.backend,
   now = () => Date.now(),
 } = {}) {
   if (!store) throw new Error("A recipe store is required.");
@@ -250,18 +273,18 @@ export function createServer({
           extracted = await extractRecipe(url);
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : "Unknown extraction error";
-          console.error(`[queue] Job ${jobId}: Hermes extraction failed:`, errorMsg);
+          console.error(`[queue] Job ${jobId}: Extraction failed:`, errorMsg);
           store.updateExtractionJob(jobId, {
             status: "failed",
             stage: "failed",
             progress: 100,
-            errorMessage: `Hermes extraction failed: ${errorMsg}`,
+            errorMessage: `Extraction failed: ${errorMsg}`,
           });
           continue;
         }
 
         store.updateExtractionJob(jobId, { status: "processing", stage: "saving", progress: 70 });
-        console.log(`[queue] Job ${jobId}: Hermes returned, saving recipe`);
+        console.log(`[queue] Job ${jobId}: Extraction finished, saving recipe`);
 
         const saved = store.saveImported(url, extracted, userId);
         console.log(`[queue] Job ${jobId}: Recipe saved: ${saved.recipe.id}, duplicate: ${saved.duplicate}`);
@@ -337,7 +360,17 @@ export function createServer({
     const pathname = new URL(request.url, "http://localhost").pathname;
 
     if (pathname === "/api/health" && request.method === "GET") {
-      return jsonResponse(response, 200, { ok: true, hermesAvailable: hermesAvailable() });
+      let available = false;
+      try {
+        available = Boolean(await extractorAvailable());
+      } catch {
+        available = false;
+      }
+      return jsonResponse(response, 200, {
+        ok: true,
+        extractorAvailable: available,
+        extractor: { backend: extractorBackend },
+      });
     }
     if (pathname === "/api/auth/register" && request.method === "POST") {
       checkSameOrigin(request);

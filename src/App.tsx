@@ -93,7 +93,7 @@ function App() {
   const [instagramLink, setInstagramLink] = useState("");
   const [notice, setNotice] = useState("");
   const [savedRecipes, setSavedRecipes] = useState<Recipe[]>([]);
-  const [serverState, setServerState] = useState<"checking" | "ready" | "hermes-missing" | "offline">("checking");
+  const [serverState, setServerState] = useState<"checking" | "ready" | "extractor-missing" | "offline">("checking");
   const [isImporting, setIsImporting] = useState(false);
   const [importJob, setImportJob] = useState<{
     id: string;
@@ -178,10 +178,10 @@ function App() {
     void fetch("/api/health")
       .then(async (response) => {
         if (!response.ok) throw new Error("Recipe server health check failed.");
-        return response.json() as Promise<{ ok: boolean; hermesAvailable: boolean }>;
+        return response.json() as Promise<{ ok: boolean; extractorAvailable: boolean }>;
       })
       .then((health) => {
-        if (active) setServerState(health.ok ? health.hermesAvailable ? "ready" : "hermes-missing" : "offline");
+        if (active) setServerState(health.ok ? health.extractorAvailable ? "ready" : "extractor-missing" : "offline");
       })
       .catch(() => {
         if (active) setServerState("offline");
@@ -508,7 +508,7 @@ function App() {
               if (result.job) {
                 // Job started or existing job found, start polling
                 setImportJob(result.job);
-                setNotice("Extracting recipe with Hermes…");
+                setNotice("Extracting recipe…");
                 pollJobStatus(result.job.id);
                 return;
               }
@@ -531,7 +531,7 @@ function App() {
         const stageMessages: Record<string, string> = {
           queued: "Waiting in queue…",
           fetching: "Fetching recipe from Instagram…",
-          extracting: "Extracting recipe with Hermes…",
+          extracting: "Extracting recipe…",
           saving: "Saving recipe…",
           completed: "Recipe ready!",
           failed: "Extraction failed.",
@@ -912,7 +912,7 @@ function App() {
               )}
               <div className="import-foot">
                 <span className={`server-status server-${serverState}`}><span />
-                  {serverState === "checking" ? "Checking recipe server…" : serverState === "ready" ? "Hermes connected" : serverState === "hermes-missing" ? "Hermes is not available on the server" : "Recipe server unavailable"}
+                  {serverState === "checking" ? "Checking recipe server…" : serverState === "ready" ? "Recipe extractor connected" : serverState === "extractor-missing" ? "Recipe extractor is not available on the server" : "Recipe server unavailable"}
                 </span>
                 <span>Duplicate recipes are grouped together.</span>
                 <button className="btn btn-ghost btn-sm" onClick={() => { setShowQueue(!showQueue); if (!showQueue) fetchQueue(); }}>

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { canonicalizeInstagramUrl, createServer } from "./index.js";
 import { createRecipeStore } from "./recipe-store.js";
@@ -38,6 +39,59 @@ function createTestStore() {
     },
   };
 }
+
+test("migrates an older database schema on startup", () => {
+  const directory = mkdtempSync(join(tmpdir(), "recipetor-old-schema-"));
+  const databasePath = join(directory, "old.sqlite");
+  const oldDb = new DatabaseSync(databasePath);
+  oldDb.exec(`
+    CREATE TABLE users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      salt TEXT NOT NULL,
+      email_verified INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE recipes (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      title_key TEXT NOT NULL,
+      description TEXT NOT NULL,
+      category TEXT NOT NULL,
+      prep_time_minutes INTEGER,
+      emoji TEXT NOT NULL,
+      color TEXT NOT NULL,
+      ingredients_json TEXT NOT NULL,
+      steps_json TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE recipe_sources (
+      url TEXT PRIMARY KEY,
+      recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL
+    );
+  `);
+  oldDb.close();
+
+  const store = createRecipeStore(databasePath, {
+    generateCode: () => "123456",
+    emailSender: async () => true,
+  });
+  try {
+    const saved = store.saveImported("https://www.instagram.com/p/OLD/", recipe);
+    assert.equal(saved.duplicate, false);
+    assert.equal(store.list().length, 1);
+
+    const job = store.createExtractionJob("https://www.instagram.com/p/OLD-JOB/", null);
+    assert.ok(job.id);
+  } finally {
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("canonicalizes public Instagram posts and rejects other hosts", () => {
   assert.equal(
@@ -88,12 +142,12 @@ test("favorites and logs an attached recipe once per user", () => {
   }
 });
 
-test("imports via the API, returns saved recipes, and avoids repeated Hermes calls", async () => {
+test("imports via the API, returns saved recipes, and avoids repeated extractor calls", async () => {
   const { store, cleanup } = createTestStore();
   let extractionCount = 0;
   const server = createServer({
     store,
-    hermesAvailable: () => true,
+    extractorAvailable: () => true,
     extractRecipe: async () => {
       extractionCount += 1;
       return {
@@ -167,9 +221,9 @@ test("returns the extraction failure reason from the import API", async () => {
   const { store, cleanup } = createTestStore();
   const server = createServer({
     store,
-    hermesAvailable: () => true,
+    extractorAvailable: () => true,
     extractRecipe: async () => {
-      throw new Error("Hermes request timed out.");
+      throw new Error("The recipe extractor timed out.");
     },
   });
 
@@ -200,7 +254,7 @@ test("returns the extraction failure reason from the import API", async () => {
     }
 
     assert.equal(job.status, "failed");
-    assert.match(job.errorMessage, /Hermes request timed out/);
+    assert.match(job.errorMessage, /recipe extractor timed out/);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     cleanup();

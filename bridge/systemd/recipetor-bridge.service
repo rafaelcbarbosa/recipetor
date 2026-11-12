@@ -1,0 +1,18 @@
+[Unit]
+Description=Recipetor extraction bridge
+After=network.target
+
+[Service]
+Type=simple
+# Run as the user that owns the Hermes configuration, or grant this user
+# access to it. Set HOME if Hermes needs to find its config directory.
+User=recipetor
+WorkingDirectory=/opt/recipetor-bridge
+EnvironmentFile=/etc/recipetor-bridge.env
+ExecStart=/usr/bin/node src/server.ts
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

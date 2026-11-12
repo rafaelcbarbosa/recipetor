@@ -1,4 +1,4 @@
-const CACHE_NAME = "recipetor-shell-cd9fe26";
+const CACHE_NAME = "recipetor-shell-322a30f";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/recipetor.svg", "/commit-info.json"];
 
 self.addEventListener("install", (event) => {

@@ -76,7 +76,7 @@ h1 { margin-bottom: 7px; font-family: Georgia, "Times New Roman", serif; font-si
 .import-foot { display: flex; justify-content: space-between; gap: 12px; margin-top: 10px; color: #93887c; font-size: 9px; }
 .server-status > span { width: 6px; height: 6px; background: #d1a96b; }
 .server-ready > span { background: #789477; }
-.server-hermes-missing > span, .server-offline > span { background: #c4664a; }
+.server-extractor-missing > span, .server-offline > span { background: #c4664a; }
 
 .import-progress { margin-top: 10px; }
 .progress-bar { height: 4px; border-radius: 2px; background: #ece7df; overflow: hidden; }

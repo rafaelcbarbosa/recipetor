@@ -212,7 +212,6 @@ export function createRecipeStore(
       updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS recipes_title_key_idx ON recipes(title_key);
-    CREATE INDEX IF NOT EXISTS recipes_user_id_idx ON recipes(user_id);
     CREATE TABLE IF NOT EXISTS recipe_sources (
       url TEXT PRIMARY KEY,
       recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
@@ -221,29 +220,31 @@ export function createRecipeStore(
     CREATE INDEX IF NOT EXISTS recipe_sources_recipe_id_idx ON recipe_sources(recipe_id);
   `);
 
-  // Migration: add totals_json column if missing (for existing databases)
-  try {
-    const columns = db.prepare("PRAGMA table_info(recipes)").all();
-    const hasTotalsJson = columns.some(c => c.name === "totals_json");
-    if (!hasTotalsJson) {
-      db.exec("ALTER TABLE recipes ADD COLUMN totals_json TEXT;");
-      console.log("Migration: added totals_json column to recipes table");
+  // Migrations: bring older databases up to the current recipes schema.
+  // The user_id index must be created after the column exists.
+  const recipeMigrations = [
+    ["base_portions", "ALTER TABLE recipes ADD COLUMN base_portions INTEGER"],
+    ["totals_json", "ALTER TABLE recipes ADD COLUMN totals_json TEXT"],
+    ["user_id", "ALTER TABLE recipes ADD COLUMN user_id TEXT REFERENCES users(id) ON DELETE SET NULL"],
+  ];
+  const recipeColumns = new Set(
+    db.prepare("PRAGMA table_info(recipes)").all().map((column) => column.name),
+  );
+  for (const [column, statement] of recipeMigrations) {
+    if (recipeColumns.has(column)) continue;
+    try {
+      db.exec(statement);
+      recipeColumns.add(column);
+      console.log(`Migration: added ${column} column to recipes table`);
+    } catch (error) {
+      console.error(
+        `Migration for recipes.${column} failed:`,
+        error instanceof Error ? error.message : "Unknown error",
+      );
+      throw error;
     }
-  } catch (error) {
-    console.error("Migration check failed:", error instanceof Error ? error.message : "Unknown error");
   }
-
-  // Migration: add user_id column to recipes if missing
-  try {
-    const columns = db.prepare("PRAGMA table_info(recipes)").all();
-    const hasUserId = columns.some(c => c.name === "user_id");
-    if (!hasUserId) {
-      db.exec("ALTER TABLE recipes ADD COLUMN user_id TEXT REFERENCES users(id) ON DELETE SET NULL;");
-      console.log("Migration: added user_id column to recipes table");
-    }
-  } catch (error) {
-    console.error("Migration check failed:", error instanceof Error ? error.message : "Unknown error");
-  }
+  db.exec("CREATE INDEX IF NOT EXISTS recipes_user_id_idx ON recipes(user_id);");
 
   // Extraction jobs table for background processing with progress tracking
   db.exec(`
