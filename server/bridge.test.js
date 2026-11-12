@@ -131,6 +131,38 @@ test("rejects an invalid recipe returned by the bridge", async () => {
   }
 });
 
+test("rejects a recipe with no instructions", async () => {
+  const { server, baseUrl } = await startMock((request, response) => {
+    sendJson(response, 200, { recipe: { ...recipe, instructions: [] } });
+  });
+
+  try {
+    const extract = createBridgeExtractor({ baseUrl, token: "secret", timeoutMs: 5000 });
+    await assert.rejects(
+      extract("https://www.instagram.com/reel/ABC/"),
+      /invalid cooking instructions/,
+    );
+  } finally {
+    await stopMock(server);
+  }
+});
+
+test("normalizes all-zero totals to null", async () => {
+  const { server, baseUrl } = await startMock((request, response) => {
+    sendJson(response, 200, {
+      recipe: { ...recipe, totals: { calories: 0, protein: 0, carbs: 0, fat: 0 } },
+    });
+  });
+
+  try {
+    const extract = createBridgeExtractor({ baseUrl, token: "secret", timeoutMs: 5000 });
+    const result = await extract("https://www.instagram.com/reel/ABC/");
+    assert.equal(result.totals, null);
+  } finally {
+    await stopMock(server);
+  }
+});
+
 test("normalizes all-null totals to null", async () => {
   const { server, baseUrl } = await startMock((request, response) => {
     sendJson(response, 200, {

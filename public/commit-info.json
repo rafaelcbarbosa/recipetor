@@ -1,5 +1,5 @@
 {
-  "hash": "ab14714",
-  "date": "2026-11-11 19:23:49 -0600",
-  "message": "Add standalone extraction bridge and wire app to it"
+  "hash": "c5b7519",
+  "date": "2026-11-11 22:16:30 -0600",
+  "message": "Harden bridge JSON parsing and normalize empty nutrition totals"
 }

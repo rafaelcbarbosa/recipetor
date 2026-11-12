@@ -89,7 +89,11 @@ export function validateRecipeResult(value) {
   if (!Array.isArray(value.ingredients) || value.ingredients.length < 1 || value.ingredients.length > 50) {
     throw new Error("The recipe extractor returned an invalid ingredient list.");
   }
-  if (!Array.isArray(value.instructions) || value.instructions.length > 40) {
+  if (
+    !Array.isArray(value.instructions) ||
+    value.instructions.length < 1 ||
+    value.instructions.length > 40
+  ) {
     throw new Error("The recipe extractor returned invalid cooking instructions.");
   }
 
@@ -109,14 +113,14 @@ export function validateRecipeResult(value) {
         fat: validateNutrition(value.totals.fat, "total fat", { allowNull: true }),
       }
     : null;
-  // Treat an all-null totals object as unknown so the store computes totals
-  // from ingredients and the UI does not render "null" values.
+  // Treat an empty totals object (all null or all zero) as unknown so the
+  // store computes totals from ingredients and the UI does not render null or
+  // 0 calories for a recipe whose nutrition was not available.
   const normalizedTotals =
     totals &&
-    totals.calories === null &&
-    totals.protein === null &&
-    totals.carbs === null &&
-    totals.fat === null
+    [totals.calories, totals.protein, totals.carbs, totals.fat].every(
+      (value) => value === null || value === 0,
+    )
       ? null
       : totals;
 

@@ -41,6 +41,14 @@ test("normalizes an all-null totals object to null", () => {
   assert.equal(recipe.totals, null);
 });
 
+test("normalizes an all-zero totals object to null", () => {
+  const recipe = validateRecipe({
+    ...RECIPE,
+    totals: { calories: 0, protein: 0, carbs: 0, fat: 0 },
+  });
+  assert.equal(recipe.totals, null);
+});
+
 test("keeps totals when at least one value is known", () => {
   const recipe = validateRecipe({
     ...RECIPE,
@@ -57,6 +65,7 @@ test("rejects unusable recipes with INVALID_MODEL_OUTPUT", () => {
     { ...RECIPE, ingredients: [] },
     { ...RECIPE, ingredients: [{ amount: -1, unit: "g", name: "flour" }] },
     { ...RECIPE, instructions: [1] },
+    { ...RECIPE, instructions: [] },
     { ...RECIPE, prepTimeMinutes: 0 },
   ];
   for (const value of cases) {

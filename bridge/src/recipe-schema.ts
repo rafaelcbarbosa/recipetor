@@ -128,7 +128,14 @@ export function validateRecipe(value: unknown): Recipe {
   if (!Array.isArray(record.ingredients) || record.ingredients.length < 1 || record.ingredients.length > 50) {
     invalid("The extractor returned an invalid ingredient list.");
   }
-  if (!Array.isArray(record.instructions) || record.instructions.length > 40) {
+  // An empty list is almost always a model failure rather than a recipe with
+  // no method. Reject it so the bridge retries instead of saving a stepless
+  // recipe.
+  if (
+    !Array.isArray(record.instructions) ||
+    record.instructions.length < 1 ||
+    record.instructions.length > 40
+  ) {
     invalid("The extractor returned invalid cooking instructions.");
   }
 
@@ -150,15 +157,14 @@ export function validateRecipe(value: unknown): Recipe {
         fat: validateNutrition(totalsRecord.fat, "total fat"),
       }
     : null;
-  // Models often return a totals object with every field null when the source
-  // has no nutrition data. Treat that as "unknown" so the app can compute it
-  // from ingredients instead of rendering null values.
+  // Models often return a totals object with every field null or zero when
+  // the source has no nutrition data. Treat that as "unknown" so the app can
+  // compute totals from ingredients instead of rendering null or 0 calories.
   const normalizedTotals =
     totals &&
-    totals.calories === null &&
-    totals.protein === null &&
-    totals.carbs === null &&
-    totals.fat === null
+    [totals.calories, totals.protein, totals.carbs, totals.fat].every(
+      (value) => value === null || value === 0,
+    )
       ? null
       : totals;
 
