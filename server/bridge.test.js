@@ -76,7 +76,8 @@ test("maps bridge error codes to friendly messages", async () => {
     ["NO_RECIPE", 422, /No recipe found in this post/],
     ["POST_INACCESSIBLE", 422, /private or unavailable/],
     ["MODEL_TIMEOUT", 504, /timed out/],
-    ["MODEL_ERROR", 502, /failed/],
+    ["EXTRACTOR_UNAVAILABLE", 503, /starting/],
+    ["MODEL_ERROR", 502, /temporarily unavailable/],
     ["INVALID_MODEL_OUTPUT", 502, /invalid result/],
   ];
 

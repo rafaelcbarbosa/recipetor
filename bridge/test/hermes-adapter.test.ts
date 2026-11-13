@@ -184,9 +184,29 @@ test("reports a missing Hermes binary without retrying", async () => {
   );
 });
 
-test("checks Hermes availability", async () => {
-  const fake = fakeHermes("process.exit(0);");
-  assert.equal(isHermesAvailable(fake.path), true);
+test("maps a gateway failure to EXTRACTOR_UNAVAILABLE", async () => {
+  const fake = fakeHermes(
+    'process.stderr.write("Error: Gateway inaccessible: service_manager_unavailable"); process.exit(1);',
+  );
+  const adapter = createHermesAdapter({ binary: fake.path });
+
+  await assert.rejects(
+    adapter.extract(URL, { timeoutMs: 5000 }),
+    rejectsWithCode("EXTRACTOR_UNAVAILABLE", true),
+  );
+});
+
+test("checks Hermes availability including the gateway", async () => {
+  const running = fakeHermes(
+    'if (process.argv.includes("status")) process.stdout.write("Gateway:      ✓ running\\n"); process.exit(0);',
+  );
+  const stopped = fakeHermes(
+    'if (process.argv.includes("status")) process.stdout.write("Gateway:      ✗ stopped\\n"); process.exit(0);',
+  );
+
+  assert.equal(isHermesAvailable(running.path), true);
+  assert.equal(isHermesAvailable(stopped.path), false);
   assert.equal(isHermesAvailable("/nonexistent/recipetor-hermes"), false);
-  assert.equal(await createHermesAdapter({ binary: fake.path }).isAvailable(), true);
+  assert.equal(await createHermesAdapter({ binary: running.path }).isAvailable(), true);
+  assert.equal(await createHermesAdapter({ binary: stopped.path }).isAvailable(), false);
 });

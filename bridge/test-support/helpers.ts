@@ -48,6 +48,7 @@ export function testConfig(overrides: Partial<BridgeConfig> = {}): BridgeConfig 
     provider: "",
     timeoutMs: 5000,
     maxAttempts: 2,
+    retryDelayMs: 0,
     maxConcurrency: 1,
     rateLimit: 100,
     rateWindowMs: 60_000,

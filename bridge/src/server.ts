@@ -194,10 +194,11 @@ export function createBridgeServer({
           url,
           timeoutMs: config.timeoutMs,
           maxAttempts: config.maxAttempts,
+          retryDelayMs: config.retryDelayMs,
           signal: controller.signal,
-          onRetry: (error, attempt) => {
+          onRetry: (error, attempt, delayMs) => {
             logger.warn(
-              `[extract] ${url} attempt ${attempt} failed (${error.code}): ${error.message}; retrying`,
+              `[extract] ${url} attempt ${attempt} failed (${error.code}): ${error.message}; retrying in ${Math.round(delayMs / 1000)}s`,
             );
           },
         });

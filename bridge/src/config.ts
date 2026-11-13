@@ -9,6 +9,7 @@ export interface BridgeConfig {
   provider: string;
   timeoutMs: number;
   maxAttempts: number;
+  retryDelayMs: number;
   maxConcurrency: number;
   rateLimit: number;
   rateWindowMs: number;
@@ -57,6 +58,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     provider: (env.BRIDGE_PROVIDER || "").trim(),
     timeoutMs: parseInteger(env, "BRIDGE_TIMEOUT_MS", 180_000, 1_000, 1_800_000),
     maxAttempts: parseInteger(env, "BRIDGE_MAX_ATTEMPTS", 2, 1, 5),
+    retryDelayMs: parseInteger(env, "BRIDGE_RETRY_DELAY_MS", 30_000, 0, 300_000),
     maxConcurrency: parseInteger(env, "BRIDGE_MAX_CONCURRENCY", 1, 1, 16),
     rateLimit: parseInteger(env, "BRIDGE_RATE_LIMIT", 30, 0, 100_000),
     rateWindowMs: parseInteger(env, "BRIDGE_RATE_WINDOW_MS", 3_600_000, 1_000, 86_400_000),

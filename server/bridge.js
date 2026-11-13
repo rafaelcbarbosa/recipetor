@@ -10,8 +10,9 @@ const BRIDGE_ERROR_MESSAGES = new Map([
   ["POST_INACCESSIBLE", "This Instagram post is private or unavailable."],
   ["NO_RECIPE", "No recipe found in this post."],
   ["INCOMPLETE_RECIPE", "No complete recipe found in this post."],
+  ["EXTRACTOR_UNAVAILABLE", "The recipe extractor is starting. Try again in a minute."],
   ["MODEL_TIMEOUT", "The recipe extractor timed out."],
-  ["MODEL_ERROR", "The recipe extractor failed. Try again."],
+  ["MODEL_ERROR", "The recipe extractor is temporarily unavailable. Try again in a minute."],
   ["INVALID_MODEL_OUTPUT", "The recipe extractor returned an invalid result."],
   ["INTERNAL", "The recipe extractor failed."],
 ]);

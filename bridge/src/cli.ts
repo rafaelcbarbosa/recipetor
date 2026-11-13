@@ -64,8 +64,11 @@ async function main(): Promise<void> {
       url,
       timeoutMs: config.timeoutMs,
       maxAttempts: config.maxAttempts,
-      onRetry: (error, attempt) => {
-        console.error(`Attempt ${attempt} failed (${error.code}): ${error.message}. Retrying...`);
+      retryDelayMs: config.retryDelayMs,
+      onRetry: (error, attempt, delayMs) => {
+        console.error(
+          `Attempt ${attempt} failed (${error.code}): ${error.message}. Retrying in ${Math.round(delayMs / 1000)}s...`,
+        );
       },
     });
     console.log(JSON.stringify(result, null, 2));

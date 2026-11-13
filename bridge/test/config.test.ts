@@ -12,6 +12,7 @@ test("uses safe bridge defaults", () => {
   assert.equal(config.provider, "");
   assert.equal(config.timeoutMs, 180_000);
   assert.equal(config.maxAttempts, 2);
+  assert.equal(config.retryDelayMs, 30_000);
   assert.equal(config.maxConcurrency, 1);
   assert.equal(config.rateLimit, 30);
   assert.equal(config.rateWindowMs, 3_600_000);
@@ -29,6 +30,7 @@ test("reads overrides from the environment", () => {
     BRIDGE_PROVIDER: "anthropic",
     BRIDGE_TIMEOUT_MS: "60000",
     BRIDGE_MAX_ATTEMPTS: "3",
+    BRIDGE_RETRY_DELAY_MS: "5000",
     BRIDGE_MAX_CONCURRENCY: "2",
     BRIDGE_RATE_LIMIT: "10",
     BRIDGE_RATE_WINDOW_MS: "120000",
@@ -43,6 +45,7 @@ test("reads overrides from the environment", () => {
   assert.equal(config.provider, "anthropic");
   assert.equal(config.timeoutMs, 60_000);
   assert.equal(config.maxAttempts, 3);
+  assert.equal(config.retryDelayMs, 5_000);
   assert.equal(config.maxConcurrency, 2);
   assert.equal(config.rateLimit, 10);
   assert.equal(config.rateWindowMs, 120_000);

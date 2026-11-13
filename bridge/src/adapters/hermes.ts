@@ -94,6 +94,10 @@ function sanitizeStderr(stderr: string): string {
   return stderr.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ").trim();
 }
 
+function isGatewayUnavailable(detail: string): boolean {
+  return /service_manager_unavailable|Gateway inaccessible/i.test(detail);
+}
+
 interface RunHermesOptions {
   timeoutMs: number;
   maxOutputBytes: number;
@@ -257,6 +261,15 @@ function runHermes(binary: string, args: string[], options: RunHermesOptions): P
         onLog?.(
           `[hermes] exited with code ${code} after ${elapsed()}s${detail ? `: ${detail}` : ""}`,
         );
+        if (isGatewayUnavailable(detail)) {
+          reject(
+            new BridgeError(
+              "EXTRACTOR_UNAVAILABLE",
+              "The recipe extractor is starting. Try again in a minute.",
+            ),
+          );
+          return;
+        }
         reject(
           new BridgeError(
             "MODEL_ERROR",
@@ -288,14 +301,27 @@ function parseOutput(output: string): Recipe {
 }
 
 export function isHermesAvailable(binary = "hermes"): boolean {
-  const result = spawnSync(binary, ["--version"], {
+  const version = spawnSync(binary, ["--version"], {
     cwd: tmpdir(),
     encoding: "utf8",
     timeout: 3000,
     windowsHide: true,
     stdio: ["ignore", "pipe", "ignore"],
   });
-  return result.status === 0;
+  if (version.status !== 0) return false;
+
+  // `--version` only proves the CLI is installed. Extraction needs the
+  // gateway, which is a separate long-running process and can be down.
+  const status = spawnSync(binary, ["status"], {
+    cwd: tmpdir(),
+    encoding: "utf8",
+    timeout: 5000,
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (status.status !== 0) return false;
+  const output = `${status.stdout ?? ""}\n${status.stderr ?? ""}`;
+  return /Gateway:\s+.*\brunning\b/i.test(output);
 }
 
 export function createHermesAdapter(options: HermesAdapterOptions = {}): ExtractorAdapter {

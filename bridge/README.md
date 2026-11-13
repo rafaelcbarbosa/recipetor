@@ -40,6 +40,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 | `BRIDGE_PROVIDER` | Hermes default | Passed to Hermes as `--provider`. |
 | `BRIDGE_TIMEOUT_MS` | `180000` | Timeout per attempt. |
 | `BRIDGE_MAX_ATTEMPTS` | `2` | Retries for retryable model failures. |
+| `BRIDGE_RETRY_DELAY_MS` | `30000` | Delay before retrying gateway/provider failures. Model-quality retries stay immediate. |
 | `BRIDGE_MAX_CONCURRENCY` | `1` | Simultaneous model calls. |
 | `BRIDGE_RATE_LIMIT` | `30` | Global requests per window. `0` disables it. |
 | `BRIDGE_RATE_WINDOW_MS` | `3600000` | Rate-limit window. |
@@ -143,6 +144,7 @@ Errors always use the same shape:
 | `POST_INACCESSIBLE` | 422 | no | Private, deleted, or login-gated post. |
 | `NO_RECIPE` | 422 | no | Post is accessible but has no recipe. |
 | `INCOMPLETE_RECIPE` | 502 | yes | Model returned ingredients but no method; becomes `NO_RECIPE` after retries. |
+| `EXTRACTOR_UNAVAILABLE` | 503 | yes | Hermes gateway is not running yet; retried with a delay. |
 | `MODEL_TIMEOUT` | 504 | no | Model exceeded `BRIDGE_TIMEOUT_MS`. |
 | `MODEL_ERROR` | 502 | yes | Hermes or the provider failed. |
 | `INVALID_MODEL_OUTPUT` | 502 | yes | Model returned unparseable or invalid JSON. |

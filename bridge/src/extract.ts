@@ -22,8 +22,42 @@ export interface ExtractRecipeOptions {
   url: string;
   timeoutMs: number;
   maxAttempts: number;
+  /** Delay before retrying infrastructure failures. Defaults to 0. */
+  retryDelayMs?: number;
   signal?: AbortSignal;
-  onRetry?: (error: BridgeError, attempt: number) => void;
+  onRetry?: (error: BridgeError, attempt: number, delayMs: number) => void;
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new BridgeError("MODEL_ERROR", "The extraction was cancelled.", { retryable: false }));
+      return;
+    }
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => {
+      cleanup();
+      reject(new BridgeError("MODEL_ERROR", "The extraction was cancelled.", { retryable: false }));
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function delayForRetry(error: BridgeError, attempt: number, baseMs: number): number {
+  if (baseMs <= 0) return 0;
+  // Model-quality retries are cheap and should happen immediately. Gateway
+  // and provider failures need time to recover, so back off exponentially.
+  if (error.code === "INCOMPLETE_RECIPE" || error.code === "INVALID_MODEL_OUTPUT") return 0;
+  return Math.min(baseMs * 2 ** (attempt - 1), 120_000);
 }
 
 /**
@@ -35,6 +69,7 @@ export async function extractRecipe({
   url,
   timeoutMs,
   maxAttempts,
+  retryDelayMs = 0,
   signal,
   onRetry,
 }: ExtractRecipeOptions): Promise<ExtractionResult> {
@@ -83,7 +118,9 @@ export async function extractRecipe({
         }
         throw bridgeError;
       }
-      onRetry?.(bridgeError, attempt);
+      const delayMs = delayForRetry(bridgeError, attempt, retryDelayMs);
+      onRetry?.(bridgeError, attempt, delayMs);
+      if (delayMs > 0) await sleep(delayMs, signal);
     }
   }
 
