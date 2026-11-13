@@ -469,6 +469,9 @@ function App() {
           if (active) {
             setToken(null);
             setUser(null);
+            setRecipes((current) =>
+              current.map((recipe) => ({ ...recipe, isFavorite: false, myRating: null, canDelete: false })),
+            );
           }
           return;
         }
@@ -1038,7 +1041,7 @@ function App() {
   function handleLogout() {
     setToken(null);
     setUser(null);
-    setRecipes((current) => current.map((recipe) => ({ ...recipe, isFavorite: false, myRating: null })));
+    setRecipes((current) => current.map((recipe) => ({ ...recipe, isFavorite: false, myRating: null, canDelete: false })));
     setFavorites([]);
     setHistory([]);
     setNotice("Signed out.");
