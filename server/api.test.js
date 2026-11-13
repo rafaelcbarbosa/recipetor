@@ -283,3 +283,180 @@ test("recovers pending extraction jobs when the server starts", async () => {
     cleanup();
   }
 });
+
+test("ratings require auth, aggregate averages, and decorate recipes per user", async () => {
+  const { store, cleanup } = createTestStore();
+  const { server, baseUrl } = await startServer(store);
+  const saved = store.saveImported("https://www.instagram.com/p/RATE/", recipe);
+
+  try {
+    const anonymous = await request(baseUrl, `/api/recipes/${saved.recipe.id}/rating`, {
+      method: "PUT",
+      body: { rating: 5 },
+    });
+    assert.equal(anonymous.status, 401);
+
+    const first = await createVerifiedUser(baseUrl, "rater-a@example.com");
+    const second = await createVerifiedUser(baseUrl, "rater-b@example.com");
+
+    const firstRating = await request(baseUrl, `/api/recipes/${saved.recipe.id}/rating`, {
+      method: "PUT",
+      token: first.token,
+      body: { rating: 5 },
+    });
+    assert.equal(firstRating.status, 200);
+    assert.deepEqual(await firstRating.json(), { ratingAvg: 5, ratingCount: 1, myRating: 5 });
+
+    const secondRating = await request(baseUrl, `/api/recipes/${saved.recipe.id}/rating`, {
+      method: "PUT",
+      token: second.token,
+      body: { rating: 2 },
+    });
+    assert.equal(secondRating.status, 200);
+    assert.deepEqual(await secondRating.json(), { ratingAvg: 3.5, ratingCount: 2, myRating: 2 });
+
+    const decorated = await (
+      await request(baseUrl, `/api/recipes/${saved.recipe.id}`, { token: first.token })
+    ).json();
+    assert.equal(decorated.recipe.ratingAvg, 3.5);
+    assert.equal(decorated.recipe.ratingCount, 2);
+    assert.equal(decorated.recipe.myRating, 5);
+
+    const invalid = await request(baseUrl, `/api/recipes/${saved.recipe.id}/rating`, {
+      method: "PUT",
+      token: first.token,
+      body: { rating: 6 },
+    });
+    assert.equal(invalid.status, 400);
+
+    const removed = await request(baseUrl, `/api/recipes/${saved.recipe.id}/rating`, {
+      method: "DELETE",
+      token: first.token,
+    });
+    assert.equal(removed.status, 200);
+    assert.deepEqual(await removed.json(), { ok: true, ratingAvg: 2, ratingCount: 1, myRating: null });
+
+    const missing = await request(baseUrl, "/api/recipes/does-not-exist/rating", {
+      method: "PUT",
+      token: first.token,
+      body: { rating: 4 },
+    });
+    assert.equal(missing.status, 404);
+  } finally {
+    await stopServer(server);
+    cleanup();
+  }
+});
+
+test("public queue hides urls and creators while reporting positions", async () => {
+  const { store, cleanup } = createTestStore();
+  const { server, baseUrl } = await startServer(store);
+
+  try {
+    const first = await createVerifiedUser(baseUrl, "queue-a@example.com");
+    const second = await createVerifiedUser(baseUrl, "queue-b@example.com");
+    const firstJob = store.createExtractionJob("https://www.instagram.com/p/AAA/", first.user.id);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const secondJob = store.createExtractionJob("https://www.instagram.com/reel/BBB/", second.user.id);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const anonymousJob = store.createExtractionJob("https://www.instagram.com/p/CCC/", null);
+
+    const anonymousQueue = await (await request(baseUrl, "/api/recipes/import/queue")).json();
+    assert.equal(anonymousQueue.jobs.length, 3);
+    for (const job of anonymousQueue.jobs) {
+      assert.equal("url" in job, false);
+      assert.equal("createdBy" in job, false);
+      assert.equal(job.isMine, false);
+      assert.match(job.shortUrl, /instagram\.com/);
+    }
+    assert.deepEqual(
+      anonymousQueue.jobs.map((job) => job.position),
+      [1, 2, 3],
+    );
+
+    const signedInQueue = await (
+      await request(baseUrl, "/api/recipes/import/queue", { token: first.token })
+    ).json();
+    const mine = signedInQueue.jobs.find((job) => job.id === firstJob.id);
+    const other = signedInQueue.jobs.find((job) => job.id === secondJob.id);
+    const unowned = signedInQueue.jobs.find((job) => job.id === anonymousJob.id);
+    assert.equal(mine.isMine, true);
+    assert.equal(mine.canRetry, true);
+    assert.equal(other.isMine, false);
+    assert.equal(other.canRetry, false);
+    assert.equal(unowned.isMine, false);
+    assert.equal(unowned.canRetry, true);
+
+    const status = await (
+      await request(baseUrl, `/api/recipes/import/status/${secondJob.id}`, { token: first.token })
+    ).json();
+    assert.equal("url" in status.job, false);
+    assert.equal(status.job.position, 2);
+    assert.equal(status.job.isMine, false);
+
+    store.updateExtractionJob(firstJob.id, { status: "completed", stage: "completed", progress: 100 });
+    const afterCompletion = await (
+      await request(baseUrl, "/api/recipes/import/queue", { token: first.token })
+    ).json();
+    assert.equal(afterCompletion.jobs.find((job) => job.id === secondJob.id).position, 1);
+    assert.equal(afterCompletion.jobs.find((job) => job.id === anonymousJob.id).position, 2);
+  } finally {
+    await stopServer(server);
+    cleanup();
+  }
+});
+
+test("failed imports can be retried only by their owner", async () => {
+  const { store, cleanup } = createTestStore();
+  const { server, baseUrl } = await startServer(store, { extractRecipe: async () => recipe });
+
+  try {
+    const owner = await createVerifiedUser(baseUrl, "retry-owner@example.com");
+    const other = await createVerifiedUser(baseUrl, "retry-other@example.com");
+    const job = store.createExtractionJob("https://www.instagram.com/p/RETRY/", owner.user.id);
+    store.updateExtractionJob(job.id, {
+      status: "failed",
+      stage: "failed",
+      progress: 100,
+      errorMessage: "Extraction failed: nope",
+    });
+
+    const anonymous = await request(baseUrl, `/api/recipes/import/retry/${job.id}`, { method: "POST" });
+    assert.equal(anonymous.status, 401);
+
+    const forbidden = await request(baseUrl, `/api/recipes/import/retry/${job.id}`, {
+      method: "POST",
+      token: other.token,
+    });
+    assert.equal(forbidden.status, 403);
+
+    const pendingJob = store.createExtractionJob("https://www.instagram.com/p/PENDING/", owner.user.id);
+    const conflict = await request(baseUrl, `/api/recipes/import/retry/${pendingJob.id}`, {
+      method: "POST",
+      token: owner.token,
+    });
+    assert.equal(conflict.status, 409);
+
+    const retried = await request(baseUrl, `/api/recipes/import/retry/${job.id}`, {
+      method: "POST",
+      token: owner.token,
+    });
+    assert.equal(retried.status, 202);
+    const body = await retried.json();
+    assert.equal(body.job.status, "pending");
+    assert.equal(body.job.isMine, true);
+    assert.equal(body.job.shortUrl, "instagram.com/p/RETRY");
+    assert.equal("url" in body.job, false);
+    assert.notEqual(body.job.id, job.id);
+
+    const missing = await request(baseUrl, "/api/recipes/import/retry/does-not-exist", {
+      method: "POST",
+      token: owner.token,
+    });
+    assert.equal(missing.status, 404);
+  } finally {
+    await stopServer(server);
+    cleanup();
+  }
+});
+

@@ -470,12 +470,12 @@ export function createServer({
       return jsonResponse(response, 200, { message: "Account deleted successfully" });
     }
     if (pathname === "/api/recipes" && request.method === "GET") {
-      return jsonResponse(response, 200, { recipes: store.list() });
+      return jsonResponse(response, 200, { recipes: store.list(extractUserId(request)) });
     }
     const singleRecipeMatch = pathname.match(/^\/api\/recipes\/([^/]+)$/);
     if (singleRecipeMatch && request.method === "GET") {
       const recipeId = singleRecipeMatch[1];
-      const recipe = store.getRecipe(recipeId);
+      const recipe = store.getRecipe(recipeId, extractUserId(request));
       if (!recipe) return jsonResponse(response, 404, { error: "Recipe not found." });
       return jsonResponse(response, 200, { recipe });
     }
@@ -487,14 +487,14 @@ export function createServer({
       const userId = extractUserId(request);
 
       // Check if recipe already exists
-      const existing = store.getBySource(url);
+      const existing = store.getBySource(url, userId);
       if (existing) return jsonResponse(response, 200, { recipe: existing, duplicate: true, reason: "source" });
 
       // Check for existing job for this URL
       const existingJob = store.getExtractionJobByUrl(url);
       if (existingJob && existingJob.status !== "completed" && existingJob.status !== "failed") {
         return jsonResponse(response, 200, {
-          job: existingJob,
+          job: store.getPublicExtractionJob(existingJob.id, userId),
           message: "Recipe extraction already in progress. Check status endpoint for progress.",
         });
       }
@@ -508,19 +508,41 @@ export function createServer({
       // Add to serial queue
       enqueueJob(job.id, url, userId);
 
-      return jsonResponse(response, 202, { job, message: "Extraction queued. Poll status endpoint for progress." });
+      return jsonResponse(response, 202, {
+        job: {
+          ...store.getPublicExtractionJob(job.id, userId),
+          status: job.status,
+          stage: job.stage,
+          progress: job.progress,
+        },
+        message: "Extraction queued. Poll status endpoint for progress.",
+      });
     }
 
     // Queue view - get all extraction jobs
     if (pathname === "/api/recipes/import/queue" && request.method === "GET") {
-      const jobs = store.listExtractionJobs();
+      const jobs = store.listPublicExtractionJobs(extractUserId(request));
       return jsonResponse(response, 200, { jobs });
+    }
+
+    // Retry a failed extraction without exposing the original URL.
+    const retryMatch = pathname.match(/^\/api\/recipes\/import\/retry\/([^/]+)$/);
+    if (retryMatch && request.method === "POST") {
+      checkSameOrigin(request);
+      const userId = extractUserId(request);
+      if (!userId) return jsonResponse(response, 401, { error: "Authentication required." });
+      const result = store.retryExtractionJob(retryMatch[1], userId);
+      if (result.error === "NOT_FOUND") return jsonResponse(response, 404, { error: "Job not found." });
+      if (result.error === "NOT_FAILED") return jsonResponse(response, 409, { error: "This job did not fail." });
+      if (result.error === "FORBIDDEN") return jsonResponse(response, 403, { error: "Only the job's owner can retry it." });
+      enqueueJob(result.job.id, store.getExtractionJob(result.job.id).url, userId);
+      return jsonResponse(response, 202, { job: result.job });
     }
 
     // Get extraction job status by job ID
     if (pathname.match(/^\/api\/recipes\/import\/status\/([^/]+)$/) && request.method === "GET") {
       const jobId = pathname.match(/^\/api\/recipes\/import\/status\/([^/]+)$/)[1];
-      const job = store.getExtractionJob(jobId);
+      const job = store.getPublicExtractionJob(jobId, extractUserId(request));
       if (!job) return jsonResponse(response, 404, { error: "Job not found." });
       return jsonResponse(response, 200, { job });
     }
@@ -534,7 +556,7 @@ export function createServer({
         const canonicalUrl = canonicalizeInstagramUrl(url);
         const job = store.getExtractionJobByUrl(canonicalUrl);
         if (!job) return jsonResponse(response, 404, { error: "No extraction job found for this URL." });
-        return jsonResponse(response, 200, { job });
+        return jsonResponse(response, 200, { job: store.getPublicExtractionJob(job.id, extractUserId(request)) });
       } catch {
         return jsonResponse(response, 400, { error: "Invalid Instagram URL." });
       }
@@ -584,6 +606,27 @@ export function createServer({
       const recipeId = favoriteDeleteMatch[1];
       store.removeFavorite(userId, recipeId);
       return jsonResponse(response, 200, { ok: true, recipeId });
+    }
+
+    // Rating endpoints
+    const ratingMatch = pathname.match(/^\/api\/recipes\/([^/]+)\/rating$/);
+    if (ratingMatch && (request.method === "PUT" || request.method === "DELETE")) {
+      checkSameOrigin(request);
+      const userId = extractUserId(request);
+      if (!userId) return jsonResponse(response, 401, { error: "Authentication required." });
+      const recipeId = ratingMatch[1];
+      if (!store.getRecipe(recipeId)) return jsonResponse(response, 404, { error: "Recipe not found." });
+
+      if (request.method === "DELETE") {
+        return jsonResponse(response, 200, { ok: true, ...store.removeRating(userId, recipeId) });
+      }
+
+      const body = await readJson(request);
+      const rating = Number(body?.rating);
+      if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+        return jsonResponse(response, 400, { error: "rating must be an integer from 1 to 5." });
+      }
+      return jsonResponse(response, 200, store.setRating(userId, recipeId, rating));
     }
 
     // History endpoints

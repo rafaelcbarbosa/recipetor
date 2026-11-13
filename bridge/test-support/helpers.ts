@@ -12,6 +12,10 @@ export const RECIPE: Recipe = {
   title: "Lemon Butter Pasta",
   description: "A bright lemon pasta.",
   category: "Dinner",
+  cuisine: "Italian",
+  mealTypes: ["Dinner"],
+  dietTags: ["Vegetarian"],
+  customTags: [],
   prepTimeMinutes: 25,
   basePortions: 4,
   ingredients: [

@@ -37,6 +37,31 @@ function getTransporter() {
   return transporter;
 }
 
+function parseJsonArray(value) {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function shortenUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./, "");
+    const path = parsed.pathname.replace(/\/$/, "");
+    return `${host}${path}`;
+  } catch {
+    return url;
+  }
+}
+
+function isActiveJob(row) {
+  return row.status === "pending" || row.status === "processing";
+}
+
 async function sendEmail(to, subject, html) {
   const t = getTransporter();
   const from = process.env.SMTP_FROM || "recipetor <noreply@barbtech.com>";
@@ -144,22 +169,33 @@ function verifyPassword(password, salt, hash) {
 
 function toRecipe(row, sourceRows) {
   const sourceUrls = sourceRows.map((source) => source.url);
+  const totals = row.totals_json ? JSON.parse(row.totals_json) : null;
   return {
     id: row.id,
     title: row.title,
     description: row.description,
     category: row.category,
+    cuisine: row.cuisine ?? "",
+    mealTypes: parseJsonArray(row.meal_types_json),
+    dietTags: parseJsonArray(row.diet_tags_json),
+    customTags: parseJsonArray(row.custom_tags_json),
     prepTimeMinutes: row.prep_time_minutes,
     basePortions: row.base_portions,
+    baseServings: row.base_portions,
     time: row.prep_time_minutes ? `${row.prep_time_minutes} min` : "Time varies",
     emoji: row.emoji,
     color: row.color,
+    imageUrl: row.image_url ?? null,
     ingredients: JSON.parse(row.ingredients_json),
     steps: JSON.parse(row.steps_json),
-    totals: row.totals_json ? JSON.parse(row.totals_json) : null,
+    totals,
+    nutritionPerPortion: totals,
     source: sourceUrls.length > 1 ? `${sourceUrls.length} Instagram sources` : "Instagram",
     sourceUrls,
+    sourcePosts: sourceUrls,
     sourceCount: sourceUrls.length,
+    ratingAvg: row.rating_avg ?? 0,
+    ratingCount: row.rating_count ?? 0,
     isExample: false,
   };
 }
@@ -226,6 +262,13 @@ export function createRecipeStore(
     ["base_portions", "ALTER TABLE recipes ADD COLUMN base_portions INTEGER"],
     ["totals_json", "ALTER TABLE recipes ADD COLUMN totals_json TEXT"],
     ["user_id", "ALTER TABLE recipes ADD COLUMN user_id TEXT REFERENCES users(id) ON DELETE SET NULL"],
+    ["cuisine", "ALTER TABLE recipes ADD COLUMN cuisine TEXT NOT NULL DEFAULT ''"],
+    ["meal_types_json", "ALTER TABLE recipes ADD COLUMN meal_types_json TEXT NOT NULL DEFAULT '[]'"],
+    ["diet_tags_json", "ALTER TABLE recipes ADD COLUMN diet_tags_json TEXT NOT NULL DEFAULT '[]'"],
+    ["custom_tags_json", "ALTER TABLE recipes ADD COLUMN custom_tags_json TEXT NOT NULL DEFAULT '[]'"],
+    ["image_url", "ALTER TABLE recipes ADD COLUMN image_url TEXT"],
+    ["rating_avg", "ALTER TABLE recipes ADD COLUMN rating_avg REAL NOT NULL DEFAULT 0"],
+    ["rating_count", "ALTER TABLE recipes ADD COLUMN rating_count INTEGER NOT NULL DEFAULT 0"],
   ];
   const recipeColumns = new Set(
     db.prepare("PRAGMA table_info(recipes)").all().map((column) => column.name),
@@ -245,6 +288,15 @@ export function createRecipeStore(
     }
   }
   db.exec("CREATE INDEX IF NOT EXISTS recipes_user_id_idx ON recipes(user_id);");
+
+  // Backfill meal types for recipes created before classification existed.
+  // New extractions carry their own values; this only fills empty arrays.
+  const backfillRows = db.prepare("SELECT id, category, meal_types_json FROM recipes").all();
+  const backfillMealTypes = db.prepare("UPDATE recipes SET meal_types_json = ? WHERE id = ?");
+  for (const row of backfillRows) {
+    if (parseJsonArray(row.meal_types_json).length > 0 || row.category === "Other") continue;
+    backfillMealTypes.run(JSON.stringify([row.category]), row.id);
+  }
 
   // Extraction jobs table for background processing with progress tracking
   db.exec(`
@@ -280,6 +332,15 @@ export function createRecipeStore(
     );
     CREATE INDEX IF NOT EXISTS user_recipe_history_user_id_idx ON user_recipe_history(user_id);
     CREATE INDEX IF NOT EXISTS user_recipe_history_recipe_id_idx ON user_recipe_history(recipe_id);
+    CREATE TABLE IF NOT EXISTS recipe_ratings (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+      rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, recipe_id)
+    );
+    CREATE INDEX IF NOT EXISTS recipe_ratings_recipe_id_idx ON recipe_ratings(recipe_id);
   `);
 
 // Email verification codes table
@@ -319,14 +380,23 @@ export function createRecipeStore(
   const addFavoriteStmt = db.prepare("INSERT OR IGNORE INTO favorites (user_id, recipe_id, created_at) VALUES (?, ?, ?)");
   const removeFavoriteStmt = db.prepare("DELETE FROM favorites WHERE user_id = ? AND recipe_id = ?");
 
+  // Rating prepared statements
+  const ratingByUserAndRecipe = db.prepare("SELECT rating FROM recipe_ratings WHERE user_id = ? AND recipe_id = ?");
+  const ratingSummary = db.prepare("SELECT COUNT(*) AS count, AVG(rating) AS average FROM recipe_ratings WHERE recipe_id = ?");
+  const upsertRatingStmt = db.prepare(`
+    INSERT INTO recipe_ratings (user_id, recipe_id, rating, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, recipe_id) DO UPDATE SET rating = excluded.rating, updated_at = excluded.updated_at
+  `);
+  const removeRatingStmt = db.prepare("DELETE FROM recipe_ratings WHERE user_id = ? AND recipe_id = ?");
+  const updateRecipeRatingStmt = db.prepare("UPDATE recipes SET rating_avg = ?, rating_count = ? WHERE id = ?");
+
   // History prepared statements
   const historyByUser = db.prepare(`
-    SELECT h.*, r.title, r.description, r.category, r.prep_time_minutes, r.base_portions, r.emoji, r.color,
-           r.ingredients_json, r.steps_json, r.totals_json
-    FROM user_recipe_history h
-    JOIN recipes r ON h.recipe_id = r.id
-    WHERE h.user_id = ?
-    ORDER BY h.created_at DESC
+    SELECT recipe_id, action, created_at
+    FROM user_recipe_history
+    WHERE user_id = ?
+    ORDER BY created_at DESC
   `);
   const addHistoryStmt = db.prepare("INSERT INTO user_recipe_history (user_id, recipe_id, action, created_at) VALUES (?, ?, ?, ?)");
 
@@ -636,6 +706,76 @@ export function createRecipeStore(
     db.prepare(`UPDATE extraction_jobs SET ${fields.join(", ")} WHERE id = ?`).run(...params);
   }
 
+  function activeJobPositions() {
+    const rows = db
+      .prepare("SELECT id FROM extraction_jobs WHERE status IN ('pending', 'processing') ORDER BY created_at ASC, id ASC")
+      .all();
+    return new Map(rows.map((row, index) => [row.id, index + 1]));
+  }
+
+  function toPublicJob(row, position, userId) {
+    return {
+      id: row.id,
+      shortUrl: shortenUrl(row.url),
+      status: row.status,
+      stage: row.stage,
+      progress: row.progress,
+      position: position ?? null,
+      isMine: Boolean(userId && row.created_by === userId),
+      canRetry: !row.created_by || row.created_by === userId,
+      recipeId: row.recipe_id ?? null,
+      error: row.error_message ?? null,
+      errorMessage: row.error_message ?? null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  function listPublicExtractionJobs(userId = null) {
+    const rows = db.prepare("SELECT * FROM extraction_jobs ORDER BY created_at ASC").all();
+    const positions = activeJobPositions();
+    return rows
+      .map((row) => toPublicJob(row, positions.get(row.id), userId))
+      .sort((left, right) => {
+        const leftActive = left.position !== null;
+        const rightActive = right.position !== null;
+        if (leftActive !== rightActive) return leftActive ? -1 : 1;
+        if (leftActive) return left.position - right.position;
+        return String(right.updatedAt).localeCompare(String(left.updatedAt));
+      });
+  }
+
+  function getPublicExtractionJob(id, userId = null) {
+    const row = jobById.get(id);
+    if (!row) return null;
+    return toPublicJob(row, activeJobPositions().get(id), userId);
+  }
+
+  function retryExtractionJob(id, userId) {
+    const row = jobById.get(id);
+    if (!row) return { error: "NOT_FOUND" };
+    if (row.status !== "failed") return { error: "NOT_FAILED" };
+    if (row.created_by && row.created_by !== userId) return { error: "FORBIDDEN" };
+    const created = createExtractionJob(row.url, userId ?? row.created_by ?? null);
+    return {
+      job: {
+        id: created.id,
+        shortUrl: shortenUrl(row.url),
+        status: "pending",
+        stage: "queued",
+        progress: 0,
+        position: activeJobPositions().get(created.id) ?? null,
+        isMine: Boolean(userId),
+        canRetry: false,
+        recipeId: null,
+        error: null,
+        errorMessage: null,
+        createdAt: created.createdAt,
+        updatedAt: created.createdAt,
+      },
+    };
+  }
+
   // Favorites functions
   function listFavorites(userId) {
     const rows = favoritesByUser.all(userId);
@@ -656,6 +796,31 @@ export function createRecipeStore(
     removeFavoriteStmt.run(userId, recipeId);
   }
 
+  // Rating functions
+  function getMyRating(userId, recipeId) {
+    const row = ratingByUserAndRecipe.get(userId, recipeId);
+    return row ? row.rating : null;
+  }
+
+  function refreshRecipeRating(recipeId) {
+    const summary = ratingSummary.get(recipeId);
+    const count = summary?.count ?? 0;
+    const average = count > 0 ? Math.round((summary.average ?? 0) * 10) / 10 : 0;
+    updateRecipeRatingStmt.run(average, count, recipeId);
+    return { ratingAvg: average, ratingCount: count };
+  }
+
+  function setRating(userId, recipeId, rating) {
+    const now = new Date().toISOString();
+    upsertRatingStmt.run(userId, recipeId, rating, now, now);
+    return { ...refreshRecipeRating(recipeId), myRating: rating };
+  }
+
+  function removeRating(userId, recipeId) {
+    removeRatingStmt.run(userId, recipeId);
+    return { ...refreshRecipeRating(recipeId), myRating: null };
+  }
+
   // History functions
   function addToHistory(userId, recipeId, action) {
     const now = new Date().toISOString();
@@ -664,21 +829,10 @@ export function createRecipeStore(
 
   function getUserHistory(userId) {
     const rows = historyByUser.all(userId);
-    return rows.map((row) => ({
-      id: row.recipe_id,
-      title: row.title,
-      description: row.description,
-      category: row.category,
-      prepTimeMinutes: row.prep_time_minutes,
-      basePortions: row.base_portions,
-      emoji: row.emoji,
-      color: row.color,
-      ingredients: JSON.parse(row.ingredients_json),
-      steps: JSON.parse(row.steps_json),
-      totals: row.totals_json ? JSON.parse(row.totals_json) : null,
-      action: row.action,
-      createdAt: row.created_at,
-    }));
+    return rows.flatMap((row) => {
+      const recipe = getRecipe(row.recipe_id, userId);
+      return recipe ? [{ ...recipe, action: row.action, createdAt: row.created_at }] : [];
+    });
   }
 
   const recipeById = db.prepare("SELECT * FROM recipes WHERE id = ?");
@@ -686,10 +840,19 @@ export function createRecipeStore(
     "SELECT url FROM recipe_sources WHERE recipe_id = ? ORDER BY created_at ASC",
   );
 
-  function getRecipe(id) {
+  function decorateRecipe(recipe, userId) {
+    if (!recipe || !userId) return recipe;
+    return {
+      ...recipe,
+      isFavorite: isFavorite(userId, recipe.id),
+      myRating: getMyRating(userId, recipe.id),
+    };
+  }
+
+  function getRecipe(id, userId = null) {
     const row = recipeById.get(id);
     if (!row) return null;
-    return toRecipe(row, sourcesByRecipe.all(id));
+    return decorateRecipe(toRecipe(row, sourcesByRecipe.all(id)), userId);
   }
 
   // Returns the owner user id, null for legacy recipes without an owner,
@@ -699,16 +862,16 @@ export function createRecipeStore(
     return row ? row.user_id ?? null : undefined;
   }
 
-  function getBySource(url) {
+  function getBySource(url, userId = null) {
     const source = db.prepare("SELECT recipe_id FROM recipe_sources WHERE url = ?").get(url);
-    return source ? getRecipe(source.recipe_id) : null;
+    return source ? getRecipe(source.recipe_id, userId) : null;
   }
 
-  function list() {
+  function list(userId = null) {
     return db
       .prepare("SELECT id FROM recipes ORDER BY updated_at DESC, title COLLATE NOCASE ASC")
       .all()
-      .map(({ id }) => getRecipe(id));
+      .map(({ id }) => getRecipe(id, userId));
   }
 
   function deleteRecipe(id) {
@@ -747,6 +910,19 @@ export function createRecipeStore(
     return totals;
   }
 
+  function mergeRecipeFacets(row, recipe) {
+    const existingMeals = parseJsonArray(row.meal_types_json);
+    const existingDiets = parseJsonArray(row.diet_tags_json);
+    const existingCustom = parseJsonArray(row.custom_tags_json);
+    return {
+      cuisine: row.cuisine || recipe.cuisine || "",
+      mealTypes: existingMeals.length ? existingMeals : (recipe.mealTypes ?? []),
+      dietTags: existingDiets.length ? existingDiets : (recipe.dietTags ?? []),
+      customTags: existingCustom.length ? existingCustom : (recipe.customTags ?? []),
+      imageUrl: row.image_url ?? recipe.imageUrl ?? null,
+    };
+  }
+
   function saveImported(url, recipe, userId) {
     const titleKey = normalizeText(recipe.title);
     const recipeFingerprint = fingerprint(titleKey, recipe.ingredients);
@@ -756,7 +932,7 @@ export function createRecipeStore(
     try {
       const source = db.prepare("SELECT recipe_id FROM recipe_sources WHERE url = ?").get(url);
       if (source) {
-        const existing = getRecipe(source.recipe_id);
+        const existing = getRecipe(source.recipe_id, userId);
         if (userId && addFavorite(userId, source.recipe_id)) addToHistory(userId, source.recipe_id, "added");
         db.exec("COMMIT");
         return { recipe: existing, duplicate: true, reason: "source" };
@@ -772,10 +948,23 @@ export function createRecipeStore(
       );
 
       if (match) {
+        const facets = mergeRecipeFacets(match, recipe);
         db.prepare("INSERT INTO recipe_sources (url, recipe_id, created_at) VALUES (?, ?, ?)")
           .run(url, match.id, now);
-        db.prepare("UPDATE recipes SET updated_at = ? WHERE id = ?").run(now, match.id);
-        const saved = getRecipe(match.id);
+        db.prepare(`
+          UPDATE recipes
+          SET updated_at = ?, cuisine = ?, meal_types_json = ?, diet_tags_json = ?, custom_tags_json = ?, image_url = ?
+          WHERE id = ?
+        `).run(
+          now,
+          facets.cuisine,
+          JSON.stringify(facets.mealTypes),
+          JSON.stringify(facets.dietTags),
+          JSON.stringify(facets.customTags),
+          facets.imageUrl,
+          match.id,
+        );
+        const saved = getRecipe(match.id, userId);
         if (userId && addFavorite(userId, match.id)) addToHistory(userId, match.id, "added");
         db.exec("COMMIT");
         return { recipe: saved, duplicate: true, reason: "recipe" };
@@ -785,9 +974,10 @@ export function createRecipeStore(
       const computedTotals = recipe.totals ? recipe.totals : computeTotalsFromIngredients(recipe.ingredients, recipe.basePortions);
       db.prepare(`
         INSERT INTO recipes (
-          id, user_id, title, title_key, description, category, prep_time_minutes, base_portions, emoji, color,
+          id, user_id, title, title_key, description, category, cuisine, meal_types_json, diet_tags_json,
+          custom_tags_json, image_url, prep_time_minutes, base_portions, emoji, color,
           ingredients_json, steps_json, totals_json, fingerprint, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id,
         userId ?? null,
@@ -795,6 +985,11 @@ export function createRecipeStore(
         titleKey,
         recipe.description,
         recipe.category,
+        recipe.cuisine ?? "",
+        JSON.stringify(recipe.mealTypes ?? []),
+        JSON.stringify(recipe.dietTags ?? []),
+        JSON.stringify(recipe.customTags ?? []),
+        recipe.imageUrl ?? null,
         recipe.prepTimeMinutes,
         recipe.basePortions ?? null,
         recipe.emoji,
@@ -808,7 +1003,7 @@ export function createRecipeStore(
       );
       db.prepare("INSERT INTO recipe_sources (url, recipe_id, created_at) VALUES (?, ?, ?)")
         .run(url, id, now);
-      const saved = getRecipe(id);
+      const saved = getRecipe(id, userId);
       
       // Auto-favorite and add to history for the user who added the recipe
       if (userId && addFavorite(userId, id)) {
@@ -847,6 +1042,9 @@ export function createRecipeStore(
     getExtractionJobByUrl,
     getExtractionJobsByUrl,
     listExtractionJobs,
+    listPublicExtractionJobs,
+    getPublicExtractionJob,
+    retryExtractionJob,
     listRecoverableExtractionJobs,
     updateExtractionJob,
     // Favorites
@@ -854,6 +1052,10 @@ export function createRecipeStore(
     isFavorite,
     addFavorite,
     removeFavorite,
+    // Ratings
+    getMyRating,
+    setRating,
+    removeRating,
     // History
     getUserHistory,
     addToHistory,

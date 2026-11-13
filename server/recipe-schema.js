@@ -1,4 +1,56 @@
 const CATEGORIES = new Set(["Breakfast", "Lunch", "Dinner", "Dessert", "Snack", "Other"]);
+const MEAL_TYPES = ["Breakfast", "Lunch", "Dinner", "Dessert", "Snack"];
+const DIET_ALIASES = {
+  vegan: "Vegan",
+  vegetarian: "Vegetarian",
+  "gluten-free": "Gluten-free",
+  glutenfree: "Gluten-free",
+  "gluten free": "Gluten-free",
+  "low-carb": "Low-carb",
+  lowcarb: "Low-carb",
+  "low carb": "Low-carb",
+  "dairy-free": "Dairy-free",
+  dairyfree: "Dairy-free",
+  "dairy free": "Dairy-free",
+  pescatarian: "Pescatarian",
+  "high-protein": "High-protein",
+  highprotein: "High-protein",
+};
+
+function normalizeTagList(value, maxItems) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  const tags = [];
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const clean = item.trim().replace(/\s+/g, " ");
+    if (!clean || clean.length > 40) continue;
+    const tag = DIET_ALIASES[clean.toLowerCase()] ?? clean;
+    if (seen.has(tag.toLowerCase())) continue;
+    seen.add(tag.toLowerCase());
+    tags.push(tag);
+    if (tags.length >= maxItems) break;
+  }
+  return tags;
+}
+
+function normalizeMealTypes(value, category) {
+  const fallback = category === "Other" ? [] : [category];
+  if (!Array.isArray(value)) return fallback;
+  const seen = new Set();
+  const meals = [];
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const key = item.trim().toLowerCase();
+    const meal = MEAL_TYPES.find(
+      (candidate) => candidate.toLowerCase() === key || (key === "snacks" && candidate === "Snack"),
+    );
+    if (!meal || seen.has(meal)) continue;
+    seen.add(meal);
+    meals.push(meal);
+  }
+  return meals.length ? meals : fallback;
+}
 const CATEGORY_STYLE = {
   Breakfast: { emoji: "🍳", color: "berry" },
   Lunch: { emoji: "🥗", color: "avocado" },
@@ -74,6 +126,10 @@ export function validateRecipeResult(value) {
   const title = boundedString(value.title, "title", 150);
   const description = boundedString(value.description ?? "", "description", 500, { allowEmpty: true });
   const category = CATEGORIES.has(value.category) ? value.category : "Other";
+  const cuisine = typeof value.cuisine === "string" ? value.cuisine.trim().slice(0, 50) : "";
+  const mealTypes = normalizeMealTypes(value.mealTypes, category);
+  const dietTags = normalizeTagList(value.dietTags, 8);
+  const customTags = normalizeTagList(value.customTags, 10);
   const prepTimeMinutes = value.prepTimeMinutes ?? null;
   if (
     prepTimeMinutes !== null &&
@@ -131,6 +187,10 @@ export function validateRecipeResult(value) {
     title,
     description,
     category,
+    cuisine,
+    mealTypes,
+    dietTags,
+    customTags,
     prepTimeMinutes,
     basePortions,
     emoji: style.emoji,

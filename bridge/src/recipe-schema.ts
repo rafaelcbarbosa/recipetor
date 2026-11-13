@@ -1,6 +1,60 @@
 import { BridgeError } from "./errors.ts";
 
 const CATEGORIES = new Set(["Breakfast", "Lunch", "Dinner", "Dessert", "Snack", "Other"]);
+const MEAL_TYPES = ["Breakfast", "Lunch", "Dinner", "Dessert", "Snack"] as const;
+
+const DIET_ALIASES: Record<string, string> = {
+  vegan: "Vegan",
+  vegetarian: "Vegetarian",
+  "gluten-free": "Gluten-free",
+  glutenfree: "Gluten-free",
+  "gluten free": "Gluten-free",
+  "low-carb": "Low-carb",
+  lowcarb: "Low-carb",
+  "low carb": "Low-carb",
+  "dairy-free": "Dairy-free",
+  dairyfree: "Dairy-free",
+  "dairy free": "Dairy-free",
+  pescatarian: "Pescatarian",
+  "high-protein": "High-protein",
+  highprotein: "High-protein",
+};
+
+function normalizeTagList(value: unknown, maxItems: number): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const clean = item.trim().replace(/\s+/g, " ");
+    if (!clean || clean.length > 40) continue;
+    const tag = DIET_ALIASES[clean.toLowerCase()] ?? clean;
+    if (seen.has(tag.toLowerCase())) continue;
+    seen.add(tag.toLowerCase());
+    tags.push(tag);
+    if (tags.length >= maxItems) break;
+  }
+  return tags;
+}
+
+function normalizeMealTypes(value: unknown, category: string): string[] {
+  const fallback = category === "Other" ? [] : [category];
+  if (!Array.isArray(value)) return fallback;
+  const seen = new Set<string>();
+  const meals: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const key = item.trim().toLowerCase();
+    const meal = MEAL_TYPES.find(
+      (candidate) =>
+        candidate.toLowerCase() === key || (key === "snacks" && candidate === "Snack"),
+    );
+    if (!meal || seen.has(meal)) continue;
+    seen.add(meal);
+    meals.push(meal);
+  }
+  return meals.length ? meals : fallback;
+}
 
 export interface Nutrition {
   calories: number | null;
@@ -20,6 +74,10 @@ export interface Recipe {
   title: string;
   description: string;
   category: string;
+  cuisine: string;
+  mealTypes: string[];
+  dietTags: string[];
+  customTags: string[];
   prepTimeMinutes: number | null;
   basePortions: number | null;
   ingredients: Ingredient[];
@@ -109,6 +167,13 @@ export function validateRecipe(value: unknown): Recipe {
   const description = boundedString(record.description ?? "", "description", 500, { allowEmpty: true });
   const category =
     typeof record.category === "string" && CATEGORIES.has(record.category) ? record.category : "Other";
+  // Classification fields are best-effort. A missing or malformed value must
+  // never discard an otherwise usable recipe.
+  const cuisine =
+    typeof record.cuisine === "string" ? record.cuisine.trim().slice(0, 50) : "";
+  const mealTypes = normalizeMealTypes(record.mealTypes, category);
+  const dietTags = normalizeTagList(record.dietTags, 8);
+  const customTags = normalizeTagList(record.customTags, 10);
 
   const prepTimeMinutes = record.prepTimeMinutes ?? null;
   if (
@@ -175,6 +240,10 @@ export function validateRecipe(value: unknown): Recipe {
     title,
     description,
     category,
+    cuisine,
+    mealTypes,
+    dietTags,
+    customTags,
     prepTimeMinutes: prepTimeMinutes as number | null,
     basePortions,
     ingredients,
