@@ -613,3 +613,81 @@ test("converts ingredient units and lets signed-in users add missing amounts", a
     cleanup();
   }
 });
+
+test("re-importing an existing link favorites it for the new user", async () => {
+  const { store, cleanup } = createTestStore();
+  const { server, baseUrl } = await startServer(store);
+
+  try {
+    const first = await createVerifiedUser(baseUrl, "first-source@example.com");
+    const second = await createVerifiedUser(baseUrl, "second-source@example.com");
+    const saved = store.saveImported("https://www.instagram.com/p/SOURCE/", recipe, first.user.id);
+
+    const response = await request(baseUrl, "/api/recipes/import", {
+      method: "POST",
+      token: second.token,
+      body: { url: "https://www.instagram.com/p/SOURCE/" },
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.reason, "source");
+    assert.equal(body.recipe.id, saved.recipe.id);
+    assert.equal(body.recipe.isFavorite, true);
+
+    const favorites = await (await request(baseUrl, "/api/favorites", { token: second.token })).json();
+    assert.ok(favorites.favorites.includes(saved.recipe.id));
+  } finally {
+    await stopServer(server);
+    cleanup();
+  }
+});
+
+test("users who join an in-progress import get the finished recipe favorited", async () => {
+  const { store, cleanup } = createTestStore();
+  let releaseExtraction;
+  const extractionGate = new Promise((resolve) => {
+    releaseExtraction = resolve;
+  });
+  const { server, baseUrl } = await startServer(store, {
+    extractRecipe: async () => {
+      await extractionGate;
+      return recipe;
+    },
+  });
+
+  try {
+    const first = await createVerifiedUser(baseUrl, "joined-first@example.com");
+    const second = await createVerifiedUser(baseUrl, "joined-second@example.com");
+    const url = "https://www.instagram.com/p/JOINED/";
+
+    const firstImport = await request(baseUrl, "/api/recipes/import", {
+      method: "POST",
+      token: first.token,
+      body: { url },
+    });
+    assert.equal(firstImport.status, 202);
+    const firstJob = (await firstImport.json()).job;
+
+    const secondImport = await request(baseUrl, "/api/recipes/import", {
+      method: "POST",
+      token: second.token,
+      body: { url },
+    });
+    assert.equal(secondImport.status, 200);
+    const secondJob = (await secondImport.json()).job;
+    assert.equal(secondJob.id, firstJob.id);
+    assert.equal(secondJob.isMine, false);
+
+    releaseExtraction();
+    const jobs = await waitForJobs(store, 1);
+    assert.ok(jobs[0].recipeId);
+
+    const firstFavorites = await (await request(baseUrl, "/api/favorites", { token: first.token })).json();
+    const secondFavorites = await (await request(baseUrl, "/api/favorites", { token: second.token })).json();
+    assert.deepEqual(firstFavorites.favorites, [jobs[0].recipeId]);
+    assert.deepEqual(secondFavorites.favorites, [jobs[0].recipeId]);
+  } finally {
+    await stopServer(server);
+    cleanup();
+  }
+});

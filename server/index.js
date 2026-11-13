@@ -261,6 +261,7 @@ export function createServer({
 
   // Serial job queue - processes one job at a time across all users
   const jobQueue = [];
+  const jobInterests = new Map();
   let isProcessing = false;
 
   async function processQueue() {
@@ -282,6 +283,7 @@ export function createServer({
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : "Unknown extraction error";
           console.error(`[queue] Job ${jobId}: Extraction failed:`, errorMsg);
+          jobInterests.delete(jobId);
           store.updateExtractionJob(jobId, {
             status: "failed",
             stage: "failed",
@@ -297,6 +299,19 @@ export function createServer({
         const saved = store.saveImported(url, extracted, userId);
         console.log(`[queue] Job ${jobId}: Recipe saved: ${saved.recipe.id}, duplicate: ${saved.duplicate}`);
 
+        // Users who submitted the same URL while this job was running also get
+        // the finished recipe favorited and added to their history.
+        const interested = jobInterests.get(jobId);
+        if (interested) {
+          for (const interestedUserId of interested) {
+            if (interestedUserId === userId) continue;
+            if (store.addFavorite(interestedUserId, saved.recipe.id)) {
+              store.addToHistory(interestedUserId, saved.recipe.id, "added");
+            }
+          }
+          jobInterests.delete(jobId);
+        }
+
         store.updateExtractionJob(jobId, {
           status: "completed",
           stage: "completed",
@@ -306,6 +321,7 @@ export function createServer({
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : "Unknown error";
         console.error(`[queue] Job ${jobId}: Failed:`, errorMsg);
+        jobInterests.delete(jobId);
         store.updateExtractionJob(jobId, {
           status: "failed",
           stage: "failed",
@@ -497,11 +513,22 @@ export function createServer({
 
       // Check if recipe already exists
       const existing = store.getBySource(url, userId, isAdminRequest(request));
-      if (existing) return jsonResponse(response, 200, { recipe: existing, duplicate: true, reason: "source" });
+      if (existing) {
+        if (userId && store.addFavorite(userId, existing.id)) {
+          store.addToHistory(userId, existing.id, "added");
+        }
+        const recipe = store.getRecipe(existing.id, userId, isAdminRequest(request));
+        return jsonResponse(response, 200, { recipe, duplicate: true, reason: "source" });
+      }
 
       // Check for existing job for this URL
       const existingJob = store.getExtractionJobByUrl(url);
       if (existingJob && existingJob.status !== "completed" && existingJob.status !== "failed") {
+        if (userId && existingJob.createdBy !== userId) {
+          const interested = jobInterests.get(existingJob.id) ?? new Set();
+          interested.add(userId);
+          jobInterests.set(existingJob.id, interested);
+        }
         return jsonResponse(response, 200, {
           job: store.getPublicExtractionJob(existingJob.id, userId),
           message: "Recipe extraction already in progress. Check status endpoint for progress.",

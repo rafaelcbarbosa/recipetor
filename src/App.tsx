@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import "./App.css";
 import { compatibleUnits, isConvertibleUnit, isKnownUnit, normalizeUnit, UNIT_GROUPS } from "./units";
 
@@ -272,7 +272,15 @@ function Icon({
   );
 }
 
-function TopBar({ onAccount }: { onAccount: () => void }) {
+function TopBar({
+  onAccount,
+  onBacklog,
+  backlogCount,
+}: {
+  onAccount: () => void;
+  onBacklog: () => void;
+  backlogCount: number;
+}) {
   return (
     <header className="topbar">
       <div className="brand">
@@ -281,9 +289,20 @@ function TopBar({ onAccount }: { onAccount: () => void }) {
         </span>
         <h1>Recipetor</h1>
       </div>
-      <button type="button" className="round-btn glass" aria-label="Account" onClick={onAccount}>
-        <Icon name="user" />
-      </button>
+      <div className="topbar-actions">
+        <button
+          type="button"
+          className="round-btn glass backlog-btn"
+          aria-label={backlogCount > 0 ? `Backlog, ${backlogCount} active` : "Backlog"}
+          onClick={onBacklog}
+        >
+          <Icon name="list" />
+          {backlogCount > 0 && <span className="backlog-badge">{backlogCount > 9 ? "9+" : backlogCount}</span>}
+        </button>
+        <button type="button" className="round-btn glass" aria-label="Account" onClick={onAccount}>
+          <Icon name="user" />
+        </button>
+      </div>
     </header>
   );
 }
@@ -409,8 +428,12 @@ function App() {
   const [isSavingIngredient, setIsSavingIngredient] = useState(false);
 
   const [instagramLink, setInstagramLink] = useState("");
-  const [isImporting, setIsImporting] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [importJob, setImportJob] = useState<ImportJob | null>(null);
+
+  const handledCompletions = useRef<Set<string>>(new Set());
+  const knownRecipes = useRef<Map<string, Recipe>>(new Map());
+  const queueLoadedAt = useRef<number | null>(null);
 
   const apiFetch = useCallback(
     async (path: string, options: RequestInit = {}) => {
@@ -425,6 +448,7 @@ function App() {
   );
 
   const refreshQueue = useCallback(async () => {
+    if (queueLoadedAt.current == null) queueLoadedAt.current = Date.now();
     try {
       const response = await apiFetch("/api/recipes/import/queue");
       if (!response.ok) return;
@@ -542,6 +566,73 @@ function App() {
     };
   }, [refreshQueue]);
 
+  useEffect(() => {
+    knownRecipes.current = new Map(recipes.map((recipe) => [recipe.id, recipe]));
+  }, [recipes]);
+
+  // Add recipes that finish in the background, even when the user is on
+  // another screen. This keeps the list and favorites current without a reload.
+  useEffect(() => {
+    const completed = queueJobs.filter(
+      (job): job is QueueJob & { recipeId: string } =>
+        job.status === "completed" &&
+        Boolean(job.recipeId) &&
+        !handledCompletions.current.has(job.id),
+    );
+    if (completed.length === 0) return;
+
+    for (const job of completed) {
+      handledCompletions.current.add(job.id);
+      const isNewCompletion =
+        queueLoadedAt.current == null || new Date(job.updatedAt).getTime() >= queueLoadedAt.current;
+
+      const known = knownRecipes.current.get(job.recipeId);
+      if (known) {
+        if (job.isMine || known.isFavorite) {
+          setFavorites((current) => (current.includes(known.id) ? current : [...current, known.id]));
+        }
+        if (job.isMine) {
+          setHistory((current) =>
+            current.some((entry) => entry.id === known.id)
+              ? current
+              : [{ ...known, action: "added", createdAt: job.updatedAt }, ...current],
+          );
+        }
+        if (isNewCompletion && job.isMine) setNotice(`Recipe ready: ${known.title}`);
+        continue;
+      }
+
+      void (async () => {
+        try {
+          const response = await apiFetch(`/api/recipes/${job.recipeId}`);
+          if (!response.ok) {
+            handledCompletions.current.delete(job.id);
+            return;
+          }
+          const data = (await response.json()) as { recipe: Recipe };
+          const recipe = data.recipe;
+          knownRecipes.current.set(recipe.id, recipe);
+          setRecipes((current) =>
+            current.some((item) => item.id === recipe.id) ? current : [recipe, ...current],
+          );
+          if (job.isMine || recipe.isFavorite) {
+            setFavorites((current) => (current.includes(recipe.id) ? current : [...current, recipe.id]));
+          }
+          if (job.isMine) {
+            setHistory((current) =>
+              current.some((entry) => entry.id === recipe.id)
+                ? current
+                : [{ ...recipe, action: "added", createdAt: job.updatedAt }, ...current],
+            );
+          }
+          if (isNewCompletion && job.isMine) setNotice(`Recipe ready: ${recipe.title}`);
+        } catch {
+          handledCompletions.current.delete(job.id);
+        }
+      })();
+    }
+  }, [queueJobs, apiFetch]);
+
   const overlayOpen = Boolean(
     showAccount || authMode || showDeleteConfirm || showSources || showTagSheet || ingredientSheet,
   );
@@ -622,6 +713,11 @@ function App() {
   function patchRecipe(id: string, patch: Partial<Recipe>) {
     setRecipes((current) => current.map((recipe) => (recipe.id === id ? { ...recipe, ...patch } : recipe)));
     setDetail((current) => (current && current.id === id ? { ...current, ...patch } : current));
+  }
+
+  function openBacklog() {
+    setShowQueue(true);
+    void refreshQueue();
   }
 
   function openRecipe(recipe: Recipe, origin: DetailOrigin) {
@@ -850,7 +946,12 @@ function App() {
     }
   }
 
-  function registerImportedRecipe(recipe: Recipe, message: string) {
+  function registerImportedRecipe(
+    recipe: Recipe,
+    message: string,
+    { openDetail = false, switchTab = false }: { openDetail?: boolean; switchTab?: boolean } = {},
+  ) {
+    knownRecipes.current.set(recipe.id, recipe);
     setRecipes((current) => [recipe, ...current.filter((item) => item.id !== recipe.id)]);
     if (user) {
       setFavorites((current) => (current.includes(recipe.id) ? current : [...current, recipe.id]));
@@ -860,11 +961,9 @@ function App() {
           : [{ ...recipe, action: "added", createdAt: new Date().toISOString() }, ...current],
       );
     }
-    setTab("recipes");
-    openRecipe(recipe, "library");
+    if (switchTab) setTab("recipes");
+    if (openDetail) openRecipe(recipe, "library");
     setInstagramLink("");
-    setIsImporting(false);
-    setImportJob(null);
     setNotice(message);
     void refreshQueue();
   }
@@ -887,8 +986,8 @@ function App() {
       return;
     }
 
-    setIsImporting(true);
-    setNotice("Checking the link…");
+    setIsSubmitting(true);
+    setNotice("Adding to the backlog…");
     try {
       const response = await apiFetch("/api/recipes/import", {
         method: "POST",
@@ -913,19 +1012,23 @@ function App() {
             : result.duplicate
               ? "Same recipe found. The new Instagram link was added to it."
               : "Recipe extracted and saved to your recipe box.",
+          { openDetail: true, switchTab: true },
         );
         return;
       }
       if (result.job) {
         setImportJob(result.job);
-        setNotice("Extracting recipe…");
+        setInstagramLink("");
+        setNotice("Added to the backlog. You can add another link while it processes.");
+        void refreshQueue();
         void pollJobStatus(result.job.id);
         return;
       }
       throw new Error("Unexpected server response.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Recipe import failed. Try again.");
-      setIsImporting(false);
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -935,32 +1038,24 @@ function App() {
       if (!response.ok) throw new Error("Failed to check job status.");
       const result = (await response.json()) as { job: ImportJob };
       const job = result.job;
-      setImportJob(job);
+      setImportJob((current) => (current == null || current.id === job.id ? job : current));
 
-      if (job.status === "completed" && job.recipeId) {
-        const recipeResponse = await apiFetch(`/api/recipes/${job.recipeId}`);
-        if (recipeResponse.ok) {
-          const data = (await recipeResponse.json()) as { recipe: Recipe };
-          registerImportedRecipe(data.recipe, "Recipe extracted and saved to your recipe box!");
-        } else {
-          setIsImporting(false);
-          setImportJob(null);
-          setNotice("The recipe finished, but it couldn't be loaded.");
-        }
+      if (job.status === "completed") {
+        if (!job.recipeId) setNotice("The recipe finished, but it couldn't be loaded.");
+        setImportJob((current) => (current?.id === job.id ? null : current));
+        void refreshQueue();
         return;
       }
       if (job.status === "failed") {
         setNotice(`Failed to extract recipe: ${job.errorMessage ?? job.error ?? "Unknown error during extraction."}`);
-        setIsImporting(false);
-        setImportJob(null);
+        setImportJob((current) => (current?.id === job.id ? null : current));
         return;
       }
       setNotice(importStageLabel(job.stage));
       window.setTimeout(() => void pollJobStatus(jobId), 2000);
     } catch {
       setNotice("Lost connection to the import job. Please try again.");
-      setIsImporting(false);
-      setImportJob(null);
+      setImportJob((current) => (current?.id === jobId ? null : current));
     }
   }
 
@@ -1553,7 +1648,11 @@ function App() {
     </div>
   ) : tab === "add" ? (
     <div className="screen">
-      <TopBar onAccount={() => setShowAccount(true)} />
+      <TopBar
+        onAccount={() => setShowAccount(true)}
+        onBacklog={openBacklog}
+        backlogCount={activeJobs.length}
+      />
       <h2 className="page-heading">Add a recipe</h2>
       <section className="add-card">
         <p>Paste a public Instagram post or reel link. We’ll turn it into a recipe you can cook.</p>
@@ -1569,14 +1668,14 @@ function App() {
               setInstagramLink(event.target.value);
               setNotice("");
             }}
-            placeholder="Paste an Instagram link"
+            placeholder="Paste link"
             autoComplete="url"
           />
-          <button type="submit" disabled={isImporting}>
-            {isImporting ? "Working…" : "Find recipe"}
+          <button type="submit" disabled={isSubmitting}>
+            {isSubmitting ? "Checking…" : "Add to backlog"}
           </button>
         </form>
-        {importJob && isImporting && (
+        {importJob && (
           <div className="progress" role="status" aria-live="polite">
             <div className="progress-track">
               <div
@@ -1590,6 +1689,7 @@ function App() {
             </div>
           </div>
         )}
+        <p className="helper">Recipes are processed one at a time. You can add another link while the backlog runs.</p>
         <div className={`server-status server-${serverState}`}>
           <span className="dot" />
           {serverState === "checking"
@@ -1604,31 +1704,11 @@ function App() {
     </div>
   ) : (
     <div className="screen">
-      <TopBar onAccount={() => setShowAccount(true)} />
-
-      {tab === "recipes" && activeJobs.length > 0 && (
-        <button
-          type="button"
-          className="queue-card"
-          onClick={() => {
-            setShowQueue(true);
-            void refreshQueue();
-          }}
-        >
-          <span className="queue-card-icon">
-            <Icon name="clock" />
-          </span>
-          <span className="queue-card-text">
-            <span className="queue-card-title">
-              {activeJobs.length} {pluralize(activeJobs.length, "recipe")} in the queue
-            </span>
-            {ownJob?.position != null && (
-              <span className="queue-card-sub">Yours is next · position {ownJob.position}</span>
-            )}
-          </span>
-          <Icon name="chevron-right" className="queue-card-chevron" />
-        </button>
-      )}
+      <TopBar
+        onAccount={() => setShowAccount(true)}
+        onBacklog={openBacklog}
+        backlogCount={activeJobs.length}
+      />
 
       <div className="search">
         <Icon name="search" />
