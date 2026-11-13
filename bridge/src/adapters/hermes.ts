@@ -1,5 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 import { BridgeError } from "../errors.ts";
 import { buildPrompt } from "../prompt.ts";
 import { validateRecipe, type Recipe } from "../recipe-schema.ts";
@@ -14,6 +16,8 @@ export interface HermesAdapterOptions {
   model?: string | null;
   provider?: string | null;
   maxOutputBytes?: number;
+  /** Overrides the gateway state file used by the health check. */
+  gatewayStatePath?: string;
   /** Receives progress messages while Hermes runs. Omit to stay quiet. */
   onLog?: (message: string) => void;
   /** How often to report that Hermes is still running. Defaults to 15s. */
@@ -300,7 +304,10 @@ function parseOutput(output: string): Recipe {
   return validateRecipe(parsed);
 }
 
-export function isHermesAvailable(binary = "hermes"): boolean {
+export function isHermesAvailable(
+  binary = "hermes",
+  gatewayStatePath = defaultGatewayStatePath(),
+): boolean {
   const version = spawnSync(binary, ["--version"], {
     cwd: tmpdir(),
     encoding: "utf8",
@@ -312,16 +319,33 @@ export function isHermesAvailable(binary = "hermes"): boolean {
 
   // `--version` only proves the CLI is installed. Extraction needs the
   // gateway, which is a separate long-running process and can be down.
-  const status = spawnSync(binary, ["status"], {
-    cwd: tmpdir(),
-    encoding: "utf8",
-    timeout: 5000,
-    windowsHide: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (status.status !== 0) return false;
-  const output = `${status.stdout ?? ""}\n${status.stderr ?? ""}`;
-  return /Gateway:\s+.*\brunning\b/i.test(output);
+  const gateway = gatewayStateIsRunning(gatewayStatePath);
+  // A missing state file means this Hermes version does not expose one; keep
+  // the old binary-only behavior instead of reporting a false negative.
+  return gateway ?? true;
+}
+
+function defaultGatewayStatePath(): string {
+  const home = process.env.HERMES_HOME?.trim() || join(homedir(), ".hermes");
+  return join(home, "gateway_state.json");
+}
+
+function gatewayStateIsRunning(statePath: string): boolean | null {
+  try {
+    const state = JSON.parse(readFileSync(statePath, "utf8")) as Record<string, unknown>;
+    if (state.gateway_state !== "running") return false;
+
+    const pid = state.pid;
+    if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return true;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  } catch {
+    return null;
+  }
 }
 
 export function createHermesAdapter(options: HermesAdapterOptions = {}): ExtractorAdapter {
@@ -329,6 +353,7 @@ export function createHermesAdapter(options: HermesAdapterOptions = {}): Extract
   const model = options.model || null;
   const provider = options.provider || null;
   const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+  const gatewayStatePath = options.gatewayStatePath;
   const onLog = options.onLog;
   const progressIntervalMs = options.progressIntervalMs;
 
@@ -360,7 +385,7 @@ export function createHermesAdapter(options: HermesAdapterOptions = {}): Extract
     },
 
     async isAvailable(): Promise<boolean> {
-      return isHermesAvailable(binary);
+      return isHermesAvailable(binary, gatewayStatePath);
     },
   };
 }

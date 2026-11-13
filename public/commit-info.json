@@ -1,5 +1,5 @@
 {
-  "hash": "d1a9cf1",
-  "date": "2026-11-11 23:07:55 -0600",
-  "message": "Treat teaser posts as no recipe instead of invalid output"
+  "hash": "9f6aebd",
+  "date": "2026-11-12 23:33:58 -0600",
+  "message": "Handle Hermes gateway restarts and report extractor availability"
 }

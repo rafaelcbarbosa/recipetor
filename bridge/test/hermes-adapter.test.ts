@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test, { after } from "node:test";
 import { createHermesAdapter, isHermesAvailable } from "../src/adapters/hermes.ts";
@@ -197,16 +197,28 @@ test("maps a gateway failure to EXTRACTOR_UNAVAILABLE", async () => {
 });
 
 test("checks Hermes availability including the gateway", async () => {
-  const running = fakeHermes(
-    'if (process.argv.includes("status")) process.stdout.write("Gateway:      ✓ running\\n"); process.exit(0);',
-  );
-  const stopped = fakeHermes(
-    'if (process.argv.includes("status")) process.stdout.write("Gateway:      ✗ stopped\\n"); process.exit(0);',
-  );
+  const running = fakeHermes("process.exit(0);");
+  const stopped = fakeHermes("process.exit(0);");
+  const missing = fakeHermes("process.exit(0);");
 
-  assert.equal(isHermesAvailable(running.path), true);
-  assert.equal(isHermesAvailable(stopped.path), false);
-  assert.equal(isHermesAvailable("/nonexistent/recipetor-hermes"), false);
-  assert.equal(await createHermesAdapter({ binary: running.path }).isAvailable(), true);
-  assert.equal(await createHermesAdapter({ binary: stopped.path }).isAvailable(), false);
+  const runningState = join(running.dir, "gateway_state.json");
+  writeFileSync(runningState, JSON.stringify({ gateway_state: "running", pid: process.pid }));
+  const stoppedState = join(stopped.dir, "stopped.json");
+  writeFileSync(stoppedState, JSON.stringify({ gateway_state: "stopped", pid: process.pid }));
+  const deadState = join(stopped.dir, "dead.json");
+  writeFileSync(deadState, JSON.stringify({ gateway_state: "running", pid: 999_999 }));
+
+  assert.equal(isHermesAvailable(running.path, runningState), true);
+  assert.equal(isHermesAvailable(stopped.path, stoppedState), false);
+  assert.equal(isHermesAvailable(stopped.path, deadState), false);
+  assert.equal(isHermesAvailable(missing.path, join(missing.dir, "absent.json")), true);
+  assert.equal(isHermesAvailable("/nonexistent/recipetor-hermes", runningState), false);
+  assert.equal(
+    await createHermesAdapter({ binary: running.path, gatewayStatePath: runningState }).isAvailable(),
+    true,
+  );
+  assert.equal(
+    await createHermesAdapter({ binary: stopped.path, gatewayStatePath: stoppedState }).isAvailable(),
+    false,
+  );
 });
