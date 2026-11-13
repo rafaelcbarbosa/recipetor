@@ -571,6 +571,38 @@ export function createServer({
       }
     }
 
+    const ingredientMatch = pathname.match(/^\/api\/recipes\/([^/]+)\/ingredients\/(\d+)$/);
+    if (ingredientMatch && request.method === "PATCH") {
+      checkSameOrigin(request);
+      const userId = extractUserId(request);
+      if (!userId) return jsonResponse(response, 401, { error: "Authentication required." });
+
+      const body = await readJson(request);
+      const changes = body && typeof body === "object" && !Array.isArray(body) ? body : {};
+      const result = store.updateIngredient(
+        ingredientMatch[1],
+        Number(ingredientMatch[2]),
+        changes,
+        userId,
+        isAdminRequest(request),
+      );
+      if (result.error) {
+        const messages = {
+          NOT_FOUND: "Recipe not found.",
+          INVALID_RECIPE: "This recipe's ingredients cannot be edited.",
+          INVALID_INDEX: "Ingredient not found.",
+          NO_CHANGES: "Provide an amount or a unit.",
+          INVALID_UNIT: "That unit is not supported.",
+          INVALID_AMOUNT: "Amount must be a non-negative number.",
+          INCOMPATIBLE_UNITS: "Those units cannot be converted.",
+        };
+        return jsonResponse(response, result.error === "NOT_FOUND" ? 404 : 400, {
+          error: messages[result.error] ?? "Couldn't update the ingredient.",
+        });
+      }
+      return jsonResponse(response, 200, { recipe: result.recipe });
+    }
+
     const deleteMatch = pathname.match(/^\/api\/recipes\/([^/]+)$/);
     if (deleteMatch && request.method === "DELETE") {
       checkSameOrigin(request);

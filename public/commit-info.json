@@ -1,5 +1,5 @@
 {
-  "hash": "42e5392",
-  "date": "2026-11-13 07:57:07 -0600",
-  "message": "Restrict recipe deletion to owners and site admin"
+  "hash": "73c9c20",
+  "date": "2026-11-13 07:58:51 -0600",
+  "message": "Clear delete permission when session ends"
 }

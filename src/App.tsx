@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import "./App.css";
+import { compatibleUnits, isConvertibleUnit, isKnownUnit, normalizeUnit, UNIT_GROUPS } from "./units";
 
 type Nutrition = {
   calories: number | null;
@@ -79,6 +80,8 @@ type User = { id: string; email: string };
 type AuthMode = "login" | "register" | "verify" | "forgot-password" | "reset-password" | null;
 type Tab = "recipes" | "add" | "favorites";
 type DetailOrigin = "library" | "favorites" | "queue" | "history";
+type IngredientSheetMode = "unit" | "quantity";
+type IngredientSheetState = { index: number; mode: IngredientSheetMode };
 type ServerState = "checking" | "ready" | "extractor-missing" | "offline";
 
 const MEAL_OPTIONS = ["Breakfast", "Lunch", "Dinner", "Dessert", "Snack"];
@@ -196,6 +199,7 @@ function Icon({
     "chevron-right": <path d="M9 5l7 7-7 7" />,
     "chevron-left": <path d="M15 5l-7 7 7 7" />,
     "chevrons-up-down": <path d="M8 10l4-4 4 4M8 14l4 4 4-4" />,
+    check: <path d="M5 12.5l4.5 4.5L20 6.5" />,
     heart: (
       <path
         fill={filled ? "currentColor" : "none"}
@@ -399,6 +403,10 @@ function App() {
   const [showTagSheet, setShowTagSheet] = useState(false);
   const [tagDraft, setTagDraft] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [ingredientSheet, setIngredientSheet] = useState<IngredientSheetState | null>(null);
+  const [ingredientAmountDraft, setIngredientAmountDraft] = useState("");
+  const [ingredientUnitDraft, setIngredientUnitDraft] = useState("");
+  const [isSavingIngredient, setIsSavingIngredient] = useState(false);
 
   const [instagramLink, setInstagramLink] = useState("");
   const [isImporting, setIsImporting] = useState(false);
@@ -534,7 +542,9 @@ function App() {
     };
   }, [refreshQueue]);
 
-  const overlayOpen = Boolean(showAccount || authMode || showDeleteConfirm || showSources || showTagSheet);
+  const overlayOpen = Boolean(
+    showAccount || authMode || showDeleteConfirm || showSources || showTagSheet || ingredientSheet,
+  );
   useEffect(() => {
     if (!overlayOpen) return;
     const previous = document.body.style.overflow;
@@ -547,7 +557,8 @@ function App() {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
-      if (showTagSheet) setShowTagSheet(false);
+      if (ingredientSheet) setIngredientSheet(null);
+      else if (showTagSheet) setShowTagSheet(false);
       else if (showSources) setShowSources(false);
       else if (showDeleteConfirm) setShowDeleteConfirm(false);
       else if (authMode) setAuthMode(null);
@@ -619,6 +630,7 @@ function App() {
     setServings(recipeBaseServings(recipe));
     setShowSources(false);
     setShowTagSheet(false);
+    setIngredientSheet(null);
     if (origin === "queue") setShowQueue(false);
     if (origin === "history") setShowHistory(false);
   }
@@ -628,6 +640,7 @@ function App() {
     setDetail(null);
     setShowSources(false);
     setShowTagSheet(false);
+    setIngredientSheet(null);
     if (origin === "queue") setShowQueue(true);
     if (origin === "history") setShowHistory(true);
   }
@@ -754,6 +767,68 @@ function App() {
     });
     setTagDraft("");
     setShowTagSheet(false);
+  }
+
+  function replaceRecipe(updated: Recipe) {
+    setRecipes((current) => current.map((recipe) => (recipe.id === updated.id ? updated : recipe)));
+    setDetail((current) => (current && current.id === updated.id ? updated : current));
+  }
+
+  function openIngredientSheet(index: number, mode: IngredientSheetMode) {
+    if (!detail) return;
+    const ingredient = detail.ingredients?.[index];
+    if (!ingredient) return;
+    if (!user) {
+      setAuthMode("login");
+      setNotice("Sign in to edit ingredients.");
+      return;
+    }
+    setNotice("");
+    if (mode === "quantity") {
+      setIngredientAmountDraft(ingredient.amount != null ? String(ingredient.amount) : "");
+      setIngredientUnitDraft(normalizeUnit(ingredient.unit || ""));
+    }
+    setIngredientSheet({ index, mode });
+  }
+
+  async function saveIngredient(index: number, changes: { amount?: number | null; unit?: string }) {
+    if (!detail) return;
+    if (!user) {
+      setAuthMode("login");
+      setNotice("Sign in to edit ingredients.");
+      return;
+    }
+    setIsSavingIngredient(true);
+    try {
+      const response = await apiFetch(`/api/recipes/${detail.id}/ingredients/${index}`, {
+        method: "PATCH",
+        body: JSON.stringify(changes),
+      });
+      const data = (await response.json().catch(() => ({}))) as { recipe?: Recipe; error?: string };
+      if (!response.ok || !data.recipe) throw new Error(data.error ?? "Couldn't update the ingredient.");
+      replaceRecipe(data.recipe);
+      setIngredientSheet(null);
+      setNotice("Ingredient updated.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Couldn't update the ingredient.");
+    } finally {
+      setIsSavingIngredient(false);
+    }
+  }
+
+  function saveIngredientQuantity() {
+    if (!ingredientSheet) return;
+    const raw = ingredientAmountDraft.trim();
+    const amount = raw === "" ? null : Number(raw);
+    if (amount != null && (!Number.isFinite(amount) || amount < 0)) {
+      setNotice("Enter a valid amount.");
+      return;
+    }
+    if (amount == null && !ingredientUnitDraft) {
+      setNotice("Add an amount or a unit.");
+      return;
+    }
+    void saveIngredient(ingredientSheet.index, { amount, unit: ingredientUnitDraft });
   }
 
   async function retryJob(job: QueueJob) {
@@ -1111,6 +1186,8 @@ function App() {
     Boolean(detailTotals) &&
     ((detailTotals?.calories ?? 0) > 0 || detailMacros.some((macro) => (macro.grams ?? 0) > 0));
   const detailRating = detail?.myRating ?? 0;
+  const ingredientSheetIngredient =
+    detail && ingredientSheet ? detail.ingredients?.[ingredientSheet.index] ?? null : null;
   const filterActive = Boolean(query.trim() || mealFilter || cuisineFilter || dietFilter);
   const emptyTitle =
     tab === "favorites" ? "No favorites yet" : filterActive ? "No recipes found" : "No recipes yet";
@@ -1256,13 +1333,41 @@ function App() {
           {(detail.ingredients ?? []).map((ingredient, index) => {
             const amount = ingredient.amount != null ? ingredient.amount * detailScale : null;
             const kcal = ingredient.nutrition?.calories != null ? ingredient.nutrition.calories * detailScale : null;
-            const amountText =
-              [amount != null ? formatQuantity(amount) : null, ingredient.unit || null].filter(Boolean).join(" ") || "—";
+            const amountText = [amount != null ? formatQuantity(amount) : null, ingredient.unit || null]
+              .filter(Boolean)
+              .join(" ");
+            const needsQuantity = ingredient.amount == null || !ingredient.unit;
+            const canChangeUnit = ingredient.amount != null && isConvertibleUnit(ingredient.unit);
+            const canAdjust = needsQuantity || canChangeUnit;
+            const missingLabels = [
+              ingredient.amount == null ? "amount" : null,
+              !ingredient.unit ? "unit" : null,
+            ].filter(Boolean);
+            const adjustLabel =
+              missingLabels.length === 2
+                ? `Add amount and unit for ${ingredient.name}`
+                : missingLabels.length === 1
+                  ? `Add ${missingLabels[0]} for ${ingredient.name}`
+                  : `Change unit for ${ingredient.name}`;
             return (
               <div className="ingredient-row" key={`${ingredient.name}-${index}`}>
-                <b>{amountText}</b>
+                {canAdjust ? (
+                  <button
+                    type="button"
+                    className={`ingredient-amount${amountText ? "" : " missing"}`}
+                    aria-label={adjustLabel}
+                    onClick={() => openIngredientSheet(index, needsQuantity ? "quantity" : "unit")}
+                  >
+                    <span>{amountText || "Add"}</span>
+                    <Icon name="chevrons-up-down" size={12} />
+                  </button>
+                ) : (
+                  <b>{amountText || "—"}</b>
+                )}
                 <span className="name">{ingredient.name}</span>
-                {kcal != null && <span className="kcal">{formatKcal(kcal)} kcal</span>}
+                <span className={`kcal${kcal == null ? " missing" : ""}`}>
+                  {kcal != null ? `${formatKcal(kcal)} kcal` : "—"}
+                </span>
               </div>
             );
           })}
@@ -1760,6 +1865,100 @@ function App() {
                 Cancel
               </button>
             </form>
+          </section>
+        </div>
+      )}
+
+      {ingredientSheet && ingredientSheetIngredient && (
+        <div
+          className="sheet-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setIngredientSheet(null);
+          }}
+        >
+          <section className="sheet" role="dialog" aria-modal="true" aria-labelledby="ingredient-title">
+            <div className="sheet-head">
+              <h2 id="ingredient-title">
+                {ingredientSheet.mode === "unit" ? "Change unit" : "Amount & unit"}
+              </h2>
+              <button type="button" className="round-btn" aria-label="Close" onClick={() => setIngredientSheet(null)}>
+                <Icon name="x" />
+              </button>
+            </div>
+            <p className="sheet-hint">{ingredientSheetIngredient.name}</p>
+
+            {ingredientSheet.mode === "unit" ? (
+              <div className="unit-options">
+                {compatibleUnits(ingredientSheetIngredient.unit).map((unit) => {
+                  const isCurrent = normalizeUnit(ingredientSheetIngredient.unit) === unit;
+                  return (
+                    <button
+                      key={unit}
+                      type="button"
+                      className={`unit-option${isCurrent ? " on" : ""}`}
+                      disabled={isSavingIngredient}
+                      onClick={() => void saveIngredient(ingredientSheet.index, { unit })}
+                    >
+                      <span>{unit}</span>
+                      {isCurrent && <Icon name="check" size={20} />}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="auth-form">
+                <div className="field">
+                  <label htmlFor="ingredient-amount">Amount</label>
+                  <input
+                    id="ingredient-amount"
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    step="any"
+                    value={ingredientAmountDraft}
+                    onChange={(event) => setIngredientAmountDraft(event.target.value)}
+                    placeholder="e.g. 200"
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="ingredient-unit">Unit</label>
+                  <div className="select-wrap">
+                    <select
+                      id="ingredient-unit"
+                      value={ingredientUnitDraft}
+                      onChange={(event) => setIngredientUnitDraft(event.target.value)}
+                    >
+                      <option value="">No unit</option>
+                      {ingredientUnitDraft && !isKnownUnit(ingredientUnitDraft) && (
+                        <option value={ingredientUnitDraft}>{ingredientUnitDraft}</option>
+                      )}
+                      {UNIT_GROUPS.map((group) => (
+                        <optgroup key={group.label} label={group.label}>
+                          {group.units.map((unit) => (
+                            <option key={unit} value={unit}>
+                              {unit}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                    <Icon name="chevrons-up-down" size={16} />
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="primary-btn"
+                  disabled={isSavingIngredient}
+                  onClick={saveIngredientQuantity}
+                >
+                  {isSavingIngredient ? "Saving…" : "Save"}
+                </button>
+                <button type="button" className="secondary-btn" onClick={() => setIngredientSheet(null)}>
+                  Cancel
+                </button>
+              </div>
+            )}
           </section>
         </div>
       )}

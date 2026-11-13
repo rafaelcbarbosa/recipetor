@@ -142,12 +142,132 @@ function normalizeIngredient(value) {
     .join(" ");
 }
 
+// A slightly looser key used only for cross-recipe nutrition lookup. It also
+// drops cooking methods and qualifiers so "large eggs, boiled" can match "egg".
+const NUTRITION_STOP_WORDS = new Set([
+  "baked", "boiled", "cooked", "fried", "grilled", "minute", "min", "raw",
+  "roasted", "sauteed", "simmered", "steamed", "toasted", "light", "lowfat",
+  "nonfat", "skim", "sweetened", "unsweetened",
+]);
+
+const SINGULAR_EXCEPTIONS = new Set(["asparagus", "citrus", "couscous", "hummus", "molasses"]);
+
+function nutritionKey(value) {
+  return normalizeIngredient(value)
+    .split(" ")
+    .filter((word) => word && !NUTRITION_STOP_WORDS.has(word) && !/^\d+$/.test(word))
+    .map((word) =>
+      word.length > 3 && word.endsWith("s") && !word.endsWith("ss") && !SINGULAR_EXCEPTIONS.has(word)
+        ? word.slice(0, -1)
+        : word,
+    )
+    .join(" ");
+}
+
 function ingredientSimilarity(left, right) {
   const a = new Set(left.map(normalizeIngredient).filter(Boolean).flatMap((name) => name.split(" ")));
   const b = new Set(right.map(normalizeIngredient).filter(Boolean).flatMap((name) => name.split(" ")));
   if (a.size === 0 || b.size === 0) return 0;
   const intersection = [...a].filter((ingredient) => b.has(ingredient)).length;
   return intersection / new Set([...a, ...b]).size;
+}
+
+// Unit tables shared in spirit with src/units.ts. Keep the canonical names in sync.
+const MASS_UNITS = {
+  g: 1,
+  kg: 1000,
+  mg: 0.001,
+  oz: 28.349523125,
+  lb: 453.59237,
+};
+const VOLUME_UNITS = {
+  ml: 1,
+  l: 1000,
+  tsp: 4.92892159375,
+  tbsp: 14.78676478125,
+  cup: 236.5882365,
+  "fl oz": 29.5735295625,
+  pint: 473.176473,
+  quart: 946.352946,
+  gallon: 3785.411784,
+};
+const COUNT_UNITS = new Set([
+  "piece", "slice", "clove", "can", "package", "pinch", "bunch", "sprig", "stick", "head",
+]);
+const UNIT_ALIASES = {
+  gram: "g", grams: "g",
+  kilogram: "kg", kilograms: "kg", kilo: "kg", kilos: "kg",
+  milligram: "mg", milligrams: "mg",
+  ounce: "oz", ounces: "oz",
+  pound: "lb", pounds: "lb", lbs: "lb",
+  milliliter: "ml", milliliters: "ml", millilitre: "ml", millilitres: "ml",
+  liter: "l", liters: "l", litre: "l", litres: "l",
+  teaspoon: "tsp", teaspoons: "tsp",
+  tablespoon: "tbsp", tablespoons: "tbsp",
+  cups: "cup",
+  "fl oz": "fl oz", floz: "fl oz", "fluid ounce": "fl oz", "fluid ounces": "fl oz",
+  pints: "pint",
+  quarts: "quart",
+  gallons: "gallon",
+  pieces: "piece", unit: "piece", units: "piece",
+  slices: "slice",
+  cloves: "clove",
+  cans: "can",
+  packages: "package", pkg: "package",
+  pinches: "pinch",
+  bunches: "bunch",
+  sprigs: "sprig",
+  sticks: "stick",
+  heads: "head",
+};
+
+function normalizeUnit(unit) {
+  const text = String(unit ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\./g, "")
+    .replace(/\s+/g, " ");
+  return UNIT_ALIASES[text] ?? text;
+}
+
+function unitInfo(unit) {
+  const canonical = normalizeUnit(unit);
+  if (Object.hasOwn(MASS_UNITS, canonical)) {
+    return { canonical, family: "mass", factor: MASS_UNITS[canonical] };
+  }
+  if (Object.hasOwn(VOLUME_UNITS, canonical)) {
+    return { canonical, family: "volume", factor: VOLUME_UNITS[canonical] };
+  }
+  if (COUNT_UNITS.has(canonical)) {
+    return { canonical, family: "count", factor: 1 };
+  }
+  return { canonical, family: "other", factor: 1 };
+}
+
+function convertAmount(amount, fromUnit, toUnit) {
+  const from = unitInfo(fromUnit);
+  const to = unitInfo(toUnit);
+  if (from.canonical === to.canonical) return amount;
+  if (from.family === "mass" && to.family === "mass") return (amount * from.factor) / to.factor;
+  if (from.family === "volume" && to.family === "volume") return (amount * from.factor) / to.factor;
+  return null;
+}
+
+function scaleNutrition(nutrition, ratio) {
+  if (!nutrition) return nutrition;
+  const scale = (value) => (value == null ? null : Math.round(value * ratio * 10) / 10);
+  return {
+    calories: scale(nutrition.calories),
+    protein: scale(nutrition.protein),
+    carbs: scale(nutrition.carbs),
+    fat: scale(nutrition.fat),
+  };
+}
+
+function median(values) {
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
 }
 
 function fingerprint(titleKey, ingredients) {
@@ -911,6 +1031,146 @@ export function createRecipeStore(
     return totals;
   }
 
+  function totalsAreEmpty(totals) {
+    if (!totals) return true;
+    return ["calories", "protein", "carbs", "fat"].every((field) => totals[field] == null || totals[field] === 0);
+  }
+
+  // Build a cross-recipe index of nutrition values, normalized to a per-gram,
+  // per-millilitre, or per-count unit so another recipe can reuse them.
+  function buildNutritionIndex() {
+    const rows = db.prepare("SELECT id, ingredients_json FROM recipes").all();
+    const samples = [];
+    for (const row of rows) {
+      let ingredients;
+      try {
+        ingredients = JSON.parse(row.ingredients_json);
+      } catch {
+        continue;
+      }
+      if (!Array.isArray(ingredients)) continue;
+      for (const ingredient of ingredients) {
+        if (!ingredient || typeof ingredient !== "object" || typeof ingredient.name !== "string") continue;
+        const info = unitInfo(ingredient.unit);
+        if (info.family === "other") continue;
+        const amount = Number(ingredient.amount);
+        if (!Number.isFinite(amount) || amount <= 0) continue;
+        const nutrition = ingredient.nutrition;
+        if (!nutrition || typeof nutrition !== "object") continue;
+        const key = nutritionKey(ingredient.name);
+        if (!key) continue;
+        samples.push({ recipeId: row.id, key, info, amount, nutrition });
+      }
+    }
+    return samples;
+  }
+
+  function inferIngredientNutrition(ingredient, samples, excludeRecipeId = null) {
+    if (!ingredient || typeof ingredient !== "object" || typeof ingredient.name !== "string") return null;
+    const target = unitInfo(ingredient.unit);
+    if (target.family === "other") return null;
+    const amount = Number(ingredient.amount);
+    if (!Number.isFinite(amount) || amount <= 0) return null;
+    const key = nutritionKey(ingredient.name);
+    if (!key) return null;
+    const targetBase = target.family === "count" ? amount : amount * target.factor;
+    if (!(targetBase > 0)) return null;
+
+    const candidates = samples.filter((sample) => {
+      if (excludeRecipeId && sample.recipeId === excludeRecipeId) return false;
+      if (sample.key !== key) return false;
+      if (target.family === "count") {
+        return sample.info.family === "count" && sample.info.canonical === target.canonical;
+      }
+      return sample.info.family === target.family;
+    });
+    if (candidates.length === 0) {
+      // Fall back to names where the shorter one is fully contained in the
+      // longer one, e.g. "cream cheese" inside "light requeijao cream cheese".
+      const targetWords = new Set(key.split(" ").filter(Boolean));
+      const wordCandidates = samples.filter((sample) => {
+        if (excludeRecipeId && sample.recipeId === excludeRecipeId) return false;
+        if (target.family === "count") {
+          if (sample.info.family !== "count" || sample.info.canonical !== target.canonical) return false;
+        } else if (sample.info.family !== target.family) {
+          return false;
+        }
+        const sampleWords = new Set(sample.key.split(" ").filter(Boolean));
+        const [smaller, larger] =
+          sampleWords.size <= targetWords.size ? [sampleWords, targetWords] : [targetWords, sampleWords];
+        return smaller.size >= 2 && [...smaller].every((word) => larger.has(word));
+      });
+      if (wordCandidates.length > 0) candidates.push(...wordCandidates);
+    }
+    if (candidates.length === 0) return null;
+
+    const existing = ingredient.nutrition ?? {};
+    const result = {
+      calories: existing.calories ?? null,
+      protein: existing.protein ?? null,
+      carbs: existing.carbs ?? null,
+      fat: existing.fat ?? null,
+    };
+    let changed = false;
+    for (const field of ["calories", "protein", "carbs", "fat"]) {
+      if (result[field] != null) continue;
+      const rates = [];
+      for (const sample of candidates) {
+        const value = Number(sample.nutrition[field]);
+        if (sample.nutrition[field] == null || !Number.isFinite(value)) continue;
+        const base = sample.info.family === "count" ? sample.amount : sample.amount * sample.info.factor;
+        if (!(base > 0)) continue;
+        rates.push(value / base);
+      }
+      if (rates.length === 0) continue;
+      result[field] = Math.round(median(rates) * targetBase * 10) / 10;
+      changed = true;
+    }
+    return changed ? result : null;
+  }
+
+  function enrichIngredients(ingredients, samples, excludeRecipeId = null) {
+    if (!Array.isArray(ingredients)) return ingredients;
+    let changed = false;
+    const next = ingredients.map((ingredient) => {
+      const inferred = inferIngredientNutrition(ingredient, samples, excludeRecipeId);
+      if (!inferred) return ingredient;
+      changed = true;
+      return { ...ingredient, nutrition: inferred };
+    });
+    return changed ? next : ingredients;
+  }
+
+  // Fill missing ingredient nutrition in existing recipes from other recipes.
+  // Runs once when the store opens so older imports benefit from newer data.
+  function backfillIngredientNutrition() {
+    const samples = buildNutritionIndex();
+    if (samples.length === 0) return 0;
+    const rows = db.prepare("SELECT id, ingredients_json, totals_json, base_portions FROM recipes").all();
+    const update = db.prepare("UPDATE recipes SET ingredients_json = ?, totals_json = ? WHERE id = ?");
+    let updated = 0;
+    for (const row of rows) {
+      let ingredients;
+      try {
+        ingredients = JSON.parse(row.ingredients_json);
+      } catch {
+        continue;
+      }
+      const next = enrichIngredients(ingredients, samples, row.id);
+      if (next === ingredients) continue;
+      let totalsJson = row.totals_json;
+      const currentTotals = totalsJson ? JSON.parse(totalsJson) : null;
+      if (totalsAreEmpty(currentTotals)) {
+        const computed = computeTotalsFromIngredients(next, row.base_portions);
+        if (computed) totalsJson = JSON.stringify(computed);
+      }
+      update.run(JSON.stringify(next), totalsJson, row.id);
+      updated += 1;
+    }
+    if (updated > 0) console.log(`Backfilled ingredient nutrition in ${updated} recipe(s)`);
+    return updated;
+  }
+
   function mergeRecipeFacets(row, recipe) {
     const existingMeals = parseJsonArray(row.meal_types_json);
     const existingDiets = parseJsonArray(row.diet_tags_json);
@@ -924,9 +1184,110 @@ export function createRecipeStore(
     };
   }
 
+  function updateIngredient(recipeId, index, changes, userId = null, isAdmin = false) {
+    if (!changes || typeof changes !== "object" || Array.isArray(changes)) return { error: "NO_CHANGES" };
+    const row = recipeById.get(recipeId);
+    if (!row) return { error: "NOT_FOUND" };
+
+    let ingredients;
+    try {
+      ingredients = JSON.parse(row.ingredients_json);
+    } catch {
+      return { error: "INVALID_RECIPE" };
+    }
+    if (!Array.isArray(ingredients)) return { error: "INVALID_RECIPE" };
+    if (!Number.isInteger(index) || index < 0 || index >= ingredients.length) return { error: "INVALID_INDEX" };
+    const current = ingredients[index];
+    if (!current || typeof current !== "object") return { error: "INVALID_INDEX" };
+
+    const hasUnit = Object.hasOwn(changes, "unit");
+    const hasAmount = Object.hasOwn(changes, "amount");
+    if (!hasUnit && !hasAmount) return { error: "NO_CHANGES" };
+
+    const currentUnit = normalizeUnit(current.unit);
+    let nextUnit = currentUnit;
+    if (hasUnit) {
+      if (typeof changes.unit !== "string") return { error: "INVALID_UNIT" };
+      const requested = normalizeUnit(changes.unit);
+      if (requested.length > 30) return { error: "INVALID_UNIT" };
+      nextUnit = requested;
+    }
+
+    let nextAmount = current.amount ?? null;
+    let amountProvided = false;
+    if (hasAmount) {
+      if (changes.amount === null || changes.amount === "") {
+        nextAmount = null;
+      } else {
+        const value = Number(changes.amount);
+        if (!Number.isFinite(value) || value < 0) return { error: "INVALID_AMOUNT" };
+        nextAmount = value;
+      }
+      amountProvided = true;
+    }
+
+    const next = { ...current };
+    let nutritionChanged = false;
+    const unitChanged = hasUnit && nextUnit !== currentUnit;
+
+    // A unit-only change converts the number so the physical quantity stays the same.
+    if (unitChanged && current.amount != null && current.amount > 0 && !amountProvided) {
+      if (currentUnit !== "" && nextUnit !== "") {
+        const converted = convertAmount(current.amount, currentUnit, nextUnit);
+        if (converted == null) return { error: "INCOMPATIBLE_UNITS" };
+        nextAmount = Math.round(converted * 10000) / 10000;
+      }
+    }
+
+    // A direct quantity edit keeps the per-unit nutrition rate.
+    if (
+      amountProvided &&
+      current.amount != null &&
+      current.amount > 0 &&
+      nextAmount != null &&
+      nextAmount !== current.amount
+    ) {
+      const explicitUnitChange = unitChanged && currentUnit !== "" && nextUnit !== "";
+      if (!explicitUnitChange && current.nutrition) {
+        next.nutrition = scaleNutrition(current.nutrition, nextAmount / current.amount);
+        nutritionChanged = true;
+      }
+    }
+    if (amountProvided && nextAmount == null && current.amount != null) {
+      next.nutrition = { calories: null, protein: null, carbs: null, fat: null };
+      nutritionChanged = true;
+    }
+
+    next.unit = hasUnit ? nextUnit : (current.unit ?? "");
+    next.amount = nextAmount;
+
+    // Once a quantity and unit are known, fill missing nutrition from other recipes.
+    const inferred = inferIngredientNutrition(next, buildNutritionIndex(), recipeId);
+    if (inferred) {
+      next.nutrition = inferred;
+      nutritionChanged = true;
+    }
+
+    ingredients[index] = next;
+    let totalsJson = row.totals_json;
+    const currentTotals = totalsJson ? JSON.parse(totalsJson) : null;
+    if (nutritionChanged && totalsAreEmpty(currentTotals)) {
+      const computed = computeTotalsFromIngredients(ingredients, row.base_portions);
+      if (computed) totalsJson = JSON.stringify(computed);
+    }
+
+    db.prepare("UPDATE recipes SET ingredients_json = ?, totals_json = ? WHERE id = ?")
+      .run(JSON.stringify(ingredients), totalsJson, recipeId);
+    return { recipe: getRecipe(recipeId, userId, isAdmin) };
+  }
+
   function saveImported(url, recipe, userId, isAdmin = false) {
-    const titleKey = normalizeText(recipe.title);
-    const recipeFingerprint = fingerprint(titleKey, recipe.ingredients);
+    const samples = buildNutritionIndex();
+    const enrichedIngredients = enrichIngredients(recipe.ingredients, samples);
+    const enrichedRecipe =
+      enrichedIngredients === recipe.ingredients ? recipe : { ...recipe, ingredients: enrichedIngredients };
+    const titleKey = normalizeText(enrichedRecipe.title);
+    const recipeFingerprint = fingerprint(titleKey, enrichedRecipe.ingredients);
     const now = new Date().toISOString();
 
     db.exec("BEGIN IMMEDIATE");
@@ -945,11 +1306,11 @@ export function createRecipeStore(
       const match = candidates.find(
         (candidate) =>
           candidate.fingerprint === recipeFingerprint ||
-          ingredientSimilarity(JSON.parse(candidate.ingredients_json), recipe.ingredients) >= 0.65,
+          ingredientSimilarity(JSON.parse(candidate.ingredients_json), enrichedRecipe.ingredients) >= 0.65,
       );
 
       if (match) {
-        const facets = mergeRecipeFacets(match, recipe);
+        const facets = mergeRecipeFacets(match, enrichedRecipe);
         db.prepare("INSERT INTO recipe_sources (url, recipe_id, created_at) VALUES (?, ?, ?)")
           .run(url, match.id, now);
         db.prepare(`
@@ -972,7 +1333,9 @@ export function createRecipeStore(
       }
 
       const id = randomUUID();
-      const computedTotals = recipe.totals ? recipe.totals : computeTotalsFromIngredients(recipe.ingredients, recipe.basePortions);
+      const computedTotals = enrichedRecipe.totals
+        ? enrichedRecipe.totals
+        : computeTotalsFromIngredients(enrichedRecipe.ingredients, enrichedRecipe.basePortions);
       db.prepare(`
         INSERT INTO recipes (
           id, user_id, title, title_key, description, category, cuisine, meal_types_json, diet_tags_json,
@@ -982,21 +1345,21 @@ export function createRecipeStore(
       `).run(
         id,
         userId ?? null,
-        recipe.title,
+        enrichedRecipe.title,
         titleKey,
-        recipe.description,
-        recipe.category,
-        recipe.cuisine ?? "",
-        JSON.stringify(recipe.mealTypes ?? []),
-        JSON.stringify(recipe.dietTags ?? []),
-        JSON.stringify(recipe.customTags ?? []),
-        recipe.imageUrl ?? null,
-        recipe.prepTimeMinutes,
-        recipe.basePortions ?? null,
-        recipe.emoji,
-        recipe.color,
-        JSON.stringify(recipe.ingredients),
-        JSON.stringify(recipe.steps),
+        enrichedRecipe.description,
+        enrichedRecipe.category,
+        enrichedRecipe.cuisine ?? "",
+        JSON.stringify(enrichedRecipe.mealTypes ?? []),
+        JSON.stringify(enrichedRecipe.dietTags ?? []),
+        JSON.stringify(enrichedRecipe.customTags ?? []),
+        enrichedRecipe.imageUrl ?? null,
+        enrichedRecipe.prepTimeMinutes,
+        enrichedRecipe.basePortions ?? null,
+        enrichedRecipe.emoji,
+        enrichedRecipe.color,
+        JSON.stringify(enrichedRecipe.ingredients),
+        JSON.stringify(enrichedRecipe.steps),
         computedTotals ? JSON.stringify(computedTotals) : null,
         recipeFingerprint,
         now,
@@ -1019,6 +1382,8 @@ export function createRecipeStore(
     }
   }
 
+  backfillIngredientNutrition();
+
   return {
     close: () => db.close(),
     createUser,
@@ -1033,6 +1398,7 @@ export function createRecipeStore(
     verifyPasswordResetCode,
     resendPasswordResetCode,
     deleteRecipe,
+    updateIngredient,
     getBySource,
     getRecipe,
     getRecipeOwner,

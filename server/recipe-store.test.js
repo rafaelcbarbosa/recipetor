@@ -260,3 +260,114 @@ test("returns the extraction failure reason from the import API", async () => {
     cleanup();
   }
 });
+
+test("fills missing ingredient nutrition from another recipe", () => {
+  const { store, cleanup } = createTestStore();
+  try {
+    const known = {
+      ...recipe,
+      title: "Chicken and rice",
+      ingredients: [
+        { amount: 100, unit: "g", name: "chicken breast", nutrition: { calories: 165, protein: 31, carbs: 0, fat: 3.6 } },
+        { amount: 100, unit: "g", name: "rice", nutrition: { calories: 130, protein: 2.7, carbs: 28, fat: 0.3 } },
+      ],
+    };
+    const missing = {
+      ...recipe,
+      title: "Chicken and broccoli",
+      ingredients: [
+        { amount: 200, unit: "g", name: "chicken breast", nutrition: { calories: null, protein: null, carbs: null, fat: null } },
+        { amount: 100, unit: "g", name: "broccoli", nutrition: { calories: 34, protein: 2.8, carbs: 7, fat: 0.4 } },
+      ],
+    };
+
+    const first = store.saveImported("https://www.instagram.com/p/KNOWN-NUTRITION/", known);
+    const second = store.saveImported("https://www.instagram.com/p/MISSING-NUTRITION/", missing);
+
+    assert.notEqual(second.recipe.id, first.recipe.id);
+    const chicken = second.recipe.ingredients.find((item) => item.name === "chicken breast");
+    assert.equal(chicken.nutrition.calories, 330);
+    assert.equal(chicken.nutrition.protein, 62);
+    assert.equal(chicken.nutrition.carbs, 0);
+    assert.equal(chicken.nutrition.fat, 7.2);
+  } finally {
+    cleanup();
+  }
+});
+
+test("infers nutrition when a missing quantity is added later", () => {
+  const { store, cleanup } = createTestStore();
+  try {
+    const known = {
+      ...recipe,
+      title: "Known chicken",
+      ingredients: [
+        { amount: 100, unit: "g", name: "chicken breast", nutrition: { calories: 165, protein: 31, carbs: 0, fat: 3.6 } },
+        { amount: 100, unit: "g", name: "rice", nutrition: { calories: 130, protein: 2.7, carbs: 28, fat: 0.3 } },
+      ],
+    };
+    const incomplete = {
+      ...recipe,
+      title: "Incomplete chicken",
+      ingredients: [
+        { amount: null, unit: "", name: "chicken breast", nutrition: { calories: null, protein: null, carbs: null, fat: null } },
+        { amount: 100, unit: "g", name: "broccoli", nutrition: { calories: 34, protein: 2.8, carbs: 7, fat: 0.4 } },
+      ],
+    };
+
+    store.saveImported("https://www.instagram.com/p/KNOWN-QUANTITY/", known);
+    const saved = store.saveImported("https://www.instagram.com/p/INCOMPLETE-QUANTITY/", incomplete);
+    assert.equal(saved.recipe.ingredients[0].nutrition.calories, null);
+
+    const updated = store.updateIngredient(saved.recipe.id, 0, { amount: 150, unit: "g" });
+    assert.equal(updated.recipe.ingredients[0].amount, 150);
+    assert.equal(updated.recipe.ingredients[0].unit, "g");
+    assert.equal(updated.recipe.ingredients[0].nutrition.calories, 247.5);
+    assert.equal(updated.recipe.ingredients[0].nutrition.protein, 46.5);
+    assert.equal(updated.recipe.ingredients[0].nutrition.carbs, 0);
+    assert.equal(updated.recipe.ingredients[0].nutrition.fat, 5.4);
+  } finally {
+    cleanup();
+  }
+});
+
+test("matches equivalent ingredient names when borrowing nutrition", () => {
+  const { store, cleanup } = createTestStore();
+  try {
+    const known = {
+      ...recipe,
+      title: "Known toppings",
+      ingredients: [
+        { amount: 100, unit: "g", name: "cream cheese", nutrition: { calories: 342, protein: 6, carbs: 4, fat: 34 } },
+        { amount: 1, unit: "piece", name: "egg", nutrition: { calories: 70, protein: 6, carbs: 0.5, fat: 5 } },
+      ],
+    };
+    const incomplete = {
+      ...recipe,
+      title: "Incomplete toppings",
+      ingredients: [
+        {
+          amount: 50,
+          unit: "g",
+          name: "light requeijão (cream cheese)",
+          nutrition: { calories: null, protein: null, carbs: null, fat: null },
+        },
+        {
+          amount: 2,
+          unit: "piece",
+          name: "large eggs, boiled ~7 minutes",
+          nutrition: { calories: null, protein: null, carbs: null, fat: null },
+        },
+      ],
+    };
+
+    const first = store.saveImported("https://www.instagram.com/p/KNOWN-MATCH/", known);
+    const second = store.saveImported("https://www.instagram.com/p/MISSING-MATCH/", incomplete);
+
+    assert.notEqual(second.recipe.id, first.recipe.id);
+    assert.equal(second.recipe.ingredients[0].nutrition.calories, 171);
+    assert.equal(second.recipe.ingredients[1].nutrition.calories, 140);
+  } finally {
+    cleanup();
+  }
+});

@@ -515,3 +515,101 @@ test("failed imports can be retried only by their owner", async () => {
   }
 });
 
+
+test("converts ingredient units and lets signed-in users add missing amounts", async () => {
+  const { store, cleanup } = createTestStore();
+  const { server, baseUrl } = await startServer(store);
+
+  try {
+    const owner = await createVerifiedUser(baseUrl, "units@example.com");
+    const saved = store.saveImported(
+      "https://www.instagram.com/p/UNITS/",
+      {
+        ...recipe,
+        title: "Unit test soup",
+        ingredients: [
+          { amount: 1, unit: "lb", name: "chicken", nutrition: { calories: 500, protein: 100, carbs: 0, fat: 20 } },
+          { amount: null, unit: "", name: "salt", nutrition: { calories: null, protein: null, carbs: null, fat: null } },
+          { amount: 240, unit: "ml", name: "cream", nutrition: { calories: 800, protein: 5, carbs: 6, fat: 84 } },
+        ],
+      },
+      owner.user.id,
+    );
+
+    const anonymous = await request(baseUrl, `/api/recipes/${saved.recipe.id}/ingredients/0`, {
+      method: "PATCH",
+      body: { unit: "g" },
+    });
+    assert.equal(anonymous.status, 401);
+
+    const converted = await request(baseUrl, `/api/recipes/${saved.recipe.id}/ingredients/0`, {
+      method: "PATCH",
+      token: owner.token,
+      body: { unit: "g" },
+    });
+    assert.equal(converted.status, 200);
+    const convertedRecipe = (await converted.json()).recipe;
+    assert.equal(convertedRecipe.ingredients[0].unit, "g");
+    assert.ok(Math.abs(convertedRecipe.ingredients[0].amount - 453.59237) < 0.01);
+    assert.equal(convertedRecipe.ingredients[0].nutrition.calories, 500);
+
+    const incompatible = await request(baseUrl, `/api/recipes/${saved.recipe.id}/ingredients/0`, {
+      method: "PATCH",
+      token: owner.token,
+      body: { unit: "ml" },
+    });
+    assert.equal(incompatible.status, 400);
+
+    const cup = await request(baseUrl, `/api/recipes/${saved.recipe.id}/ingredients/2`, {
+      method: "PATCH",
+      token: owner.token,
+      body: { unit: "cup" },
+    });
+    assert.equal(cup.status, 200);
+    const cupRecipe = (await cup.json()).recipe;
+    assert.equal(cupRecipe.ingredients[2].unit, "cup");
+    assert.ok(Math.abs(cupRecipe.ingredients[2].amount - 1.014420681) < 0.001);
+    assert.equal(cupRecipe.ingredients[2].nutrition.calories, 800);
+
+    const added = await request(baseUrl, `/api/recipes/${saved.recipe.id}/ingredients/1`, {
+      method: "PATCH",
+      token: owner.token,
+      body: { amount: 2, unit: "pinch" },
+    });
+    assert.equal(added.status, 200);
+    const addedRecipe = (await added.json()).recipe;
+    assert.equal(addedRecipe.ingredients[1].amount, 2);
+    assert.equal(addedRecipe.ingredients[1].unit, "pinch");
+
+    const invalidAmount = await request(baseUrl, `/api/recipes/${saved.recipe.id}/ingredients/1`, {
+      method: "PATCH",
+      token: owner.token,
+      body: { amount: -1 },
+    });
+    assert.equal(invalidAmount.status, 400);
+
+    const invalidUnit = await request(baseUrl, `/api/recipes/${saved.recipe.id}/ingredients/1`, {
+      method: "PATCH",
+      token: owner.token,
+      body: { unit: "x".repeat(31) },
+    });
+    assert.equal(invalidUnit.status, 400);
+
+    const missingIndex = await request(baseUrl, `/api/recipes/${saved.recipe.id}/ingredients/99`, {
+      method: "PATCH",
+      token: owner.token,
+      body: { amount: 1 },
+    });
+    assert.equal(missingIndex.status, 400);
+
+    const noChanges = await request(baseUrl, `/api/recipes/${saved.recipe.id}/ingredients/1`, {
+      method: "PATCH",
+      token: owner.token,
+      body: {},
+    });
+    assert.equal(noChanges.status, 400);
+  } finally {
+    await stopServer(server);
+    cleanup();
+  }
+});

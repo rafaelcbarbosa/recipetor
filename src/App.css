@@ -792,6 +792,44 @@ select:focus-visible {
   font-weight: 600;
 }
 
+.ingredient-amount {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 84px;
+  min-height: 44px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ingredient-amount > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ingredient-amount > svg {
+  flex: none;
+  color: var(--muted);
+}
+
+.ingredient-amount.missing {
+  color: var(--tomato-action);
+}
+
+.ingredient-amount:focus-visible {
+  border-radius: 8px;
+  outline-offset: 2px;
+}
+
 .ingredient-row .name {
   flex: 1;
   min-width: 0;
@@ -1316,6 +1354,75 @@ button.queue-row {
 
 .field input::placeholder {
   color: var(--muted);
+}
+
+.select-wrap {
+  position: relative;
+}
+
+.select-wrap select {
+  width: 100%;
+  height: 44px;
+  padding: 0 40px 0 14px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--field);
+  font-size: 17px;
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.select-wrap > svg {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.primary-btn:disabled,
+.secondary-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.unit-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.unit-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 52px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--canvas);
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.unit-option.on {
+  background: var(--butter);
+  color: var(--tomato-action);
+}
+
+.unit-option > svg {
+  flex: none;
+  color: var(--tomato-action);
+}
+
+.unit-option:disabled {
+  opacity: 0.6;
+  cursor: wait;
 }
 
 .secondary-btn {
