@@ -1889,23 +1889,28 @@ function App() {
             <p className="sheet-hint">{ingredientSheetIngredient.name}</p>
 
             {ingredientSheet.mode === "unit" ? (
-              <div className="unit-options">
-                {compatibleUnits(ingredientSheetIngredient.unit).map((unit) => {
-                  const isCurrent = normalizeUnit(ingredientSheetIngredient.unit) === unit;
-                  return (
-                    <button
-                      key={unit}
-                      type="button"
-                      className={`unit-option${isCurrent ? " on" : ""}`}
-                      disabled={isSavingIngredient}
-                      onClick={() => void saveIngredient(ingredientSheet.index, { unit })}
-                    >
-                      <span>{unit}</span>
-                      {isCurrent && <Icon name="check" size={20} />}
-                    </button>
-                  );
-                })}
-              </div>
+              <>
+                <div className="unit-options">
+                  {compatibleUnits(ingredientSheetIngredient.unit).map((unit) => {
+                    const isCurrent = normalizeUnit(ingredientSheetIngredient.unit) === unit;
+                    return (
+                      <button
+                        key={unit}
+                        type="button"
+                        className={`unit-option${isCurrent ? " on" : ""}`}
+                        disabled={isSavingIngredient}
+                        onClick={() => void saveIngredient(ingredientSheet.index, { unit })}
+                      >
+                        <span>{unit}</span>
+                        {isCurrent && <Icon name="check" size={20} />}
+                      </button>
+                    );
+                  })}
+                </div>
+                <button type="button" className="secondary-btn" onClick={() => setIngredientSheet(null)}>
+                  Cancel
+                </button>
+              </>
             ) : (
               <div className="auth-form">
                 <div className="field">
