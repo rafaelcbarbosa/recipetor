@@ -1105,7 +1105,7 @@ function App() {
     detailTotals?.calories && detailTotals.calories > 0 ? detailTotals.calories : detailKnownMacroKcal;
   const detailHasNutrition =
     Boolean(detailTotals) &&
-    (detailTotals?.calories != null || detailMacros.some((macro) => macro.grams != null));
+    ((detailTotals?.calories ?? 0) > 0 || detailMacros.some((macro) => (macro.grams ?? 0) > 0));
   const detailRating = detail?.myRating ?? 0;
   const filterActive = Boolean(query.trim() || mealFilter || cuisineFilter || dietFilter);
   const emptyTitle =
