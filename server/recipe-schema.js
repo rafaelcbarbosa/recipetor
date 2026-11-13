@@ -116,8 +116,8 @@ function validateIngredientLine(item) {
 }
 
 /**
- * Validates a recipe returned by the extraction bridge (or the legacy Hermes
- * extractor) and normalizes it into the shape the recipe store persists.
+ * Validates a recipe returned by the recipe extractor and normalizes it into
+ * the shape the recipe store persists.
  */
 export function validateRecipeResult(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {

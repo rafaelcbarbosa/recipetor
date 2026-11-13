@@ -3,9 +3,8 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createBridgeExtractor, isBridgeAvailable } from "./bridge.js";
-import { createHermesExtractor, isHermesAvailable } from "./hermes.js";
 import { createRecipeStore } from "./recipe-store.js";
+import { createScriptExtractor, isScriptAvailable } from "./script-extractor.js";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const MAX_REQUEST_BYTES = 2048;
@@ -45,6 +44,8 @@ const MIME_TYPES = new Map([
   [".css", "text/css; charset=utf-8"],
   [".html", "text/html; charset=utf-8"],
   [".ico", "image/x-icon"],
+  [".jpeg", "image/jpeg"],
+  [".jpg", "image/jpeg"],
   [".js", "text/javascript; charset=utf-8"],
   [".json", "application/json; charset=utf-8"],
   [".png", "image/png"],
@@ -214,6 +215,23 @@ function sendStaticFile(request, response) {
   return sendFile(filePath, request, response);
 }
 
+function sendMediaFile(request, response, mediaDirectory) {
+  if (request.method !== "GET" && request.method !== "HEAD") return false;
+
+  let pathname;
+  try {
+    pathname = decodeURIComponent(new URL(request.url, "http://localhost").pathname);
+  } catch {
+    return false;
+  }
+  if (!pathname.startsWith("/media/")) return false;
+
+  const filePath = resolve(mediaDirectory, pathname.slice("/media/".length));
+  if (filePath === mediaDirectory || !filePath.startsWith(`${mediaDirectory}${sep}`)) return false;
+  if (!existsSync(filePath)) return false;
+  return sendFile(filePath, request, response);
+}
+
 function sendFile(filePath, request, response) {
   const content = readFileSync(filePath);
   response.writeHead(200, {
@@ -228,32 +246,20 @@ function sendFile(filePath, request, response) {
   return true;
 }
 
-function createExtractorFromEnv() {
-  const backend = (process.env.RECIPE_EXTRACTOR || "bridge").trim().toLowerCase();
-  if (backend === "hermes") {
-    return {
-      backend,
-      extractRecipe: createHermesExtractor(),
-      extractorAvailable: () => isHermesAvailable(),
-    };
-  }
-  if (backend !== "bridge") {
-    throw new Error(`Unsupported RECIPE_EXTRACTOR "${backend}". Use "bridge" or "hermes".`);
-  }
-  return {
-    backend,
-    extractRecipe: createBridgeExtractor(),
-    extractorAvailable: () => isBridgeAvailable(),
-  };
-}
+const defaultExtractor = {
+  backend: "script",
+  extractRecipe: createScriptExtractor(),
+  extractorAvailable: () => isScriptAvailable(),
+};
 
-const defaultExtractor = createExtractorFromEnv();
+const DEFAULT_MEDIA_DIR = resolve(ROOT, "data/media");
 
 export function createServer({
   store,
   extractRecipe = defaultExtractor.extractRecipe,
   extractorAvailable = defaultExtractor.extractorAvailable,
   extractorBackend = defaultExtractor.backend,
+  mediaDir = process.env.RECIPETOR_MEDIA_DIR || DEFAULT_MEDIA_DIR,
   now = () => Date.now(),
 } = {}) {
   if (!store) throw new Error("A recipe store is required.");
@@ -271,15 +277,24 @@ export function createServer({
     while (jobQueue.length > 0) {
       const { jobId, url, userId } = jobQueue.shift();
       try {
-        store.updateExtractionJob(jobId, { status: "processing", stage: "queued", progress: 5 });
+        store.updateExtractionJob(jobId, { status: "processing", stage: "queued", progress: 5, stageLabel: null });
         console.log(`[queue] Job ${jobId}: Starting extraction for ${url}`);
 
-        store.updateExtractionJob(jobId, { status: "processing", stage: "fetching", progress: 10 });
+        store.updateExtractionJob(jobId, { status: "processing", stage: "fetching", progress: 10, stageLabel: "Fetching post" });
 
-        store.updateExtractionJob(jobId, { status: "processing", stage: "extracting", progress: 30 });
+        store.updateExtractionJob(jobId, { status: "processing", stage: "extracting", progress: 30, stageLabel: "Extracting recipe" });
         let extracted;
         try {
-          extracted = await extractRecipe(url);
+          extracted = await extractRecipe(url, {
+            onProgress: ({ stage, progress, label }) => {
+              store.updateExtractionJob(jobId, {
+                status: "processing",
+                stage,
+                progress,
+                ...(label ? { stageLabel: label } : {}),
+              });
+            },
+          });
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : "Unknown extraction error";
           console.error(`[queue] Job ${jobId}: Extraction failed:`, errorMsg);
@@ -288,12 +303,13 @@ export function createServer({
             status: "failed",
             stage: "failed",
             progress: 100,
+            stageLabel: null,
             errorMessage: `Extraction failed: ${errorMsg}`,
           });
           continue;
         }
 
-        store.updateExtractionJob(jobId, { status: "processing", stage: "saving", progress: 70 });
+        store.updateExtractionJob(jobId, { status: "processing", stage: "saving", progress: 70, stageLabel: "Saving recipe" });
         console.log(`[queue] Job ${jobId}: Extraction finished, saving recipe`);
 
         const saved = store.saveImported(url, extracted, userId);
@@ -316,6 +332,7 @@ export function createServer({
           status: "completed",
           stage: "completed",
           progress: 100,
+          stageLabel: null,
           recipeId: saved.recipe.id,
         });
       } catch (error) {
@@ -326,6 +343,7 @@ export function createServer({
           status: "failed",
           stage: "failed",
           progress: 100,
+          stageLabel: null,
           errorMessage: `Extraction failed: ${errorMsg}`,
         });
       }
@@ -721,6 +739,7 @@ export function createServer({
     if (pathname.startsWith("/api/")) {
       return jsonResponse(response, 404, { error: "API endpoint not found." });
     }
+    if (sendMediaFile(request, response, mediaDir)) return;
     if (sendStaticFile(request, response)) return;
     return jsonResponse(response, 404, { error: "Not found." });
   }

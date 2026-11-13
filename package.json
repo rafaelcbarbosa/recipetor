@@ -12,9 +12,7 @@
     "preview": "vite preview",
     "start": "node --env-file-if-exists=.env server/index.js",
     "test": "node --test",
-    "bridge:dev": "npm --prefix bridge run dev",
-    "bridge:test": "npm --prefix bridge test",
-    "bridge:typecheck": "npm --prefix bridge run typecheck"
+    "extractor:setup": "bash extractor/setup.sh"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.4.1",

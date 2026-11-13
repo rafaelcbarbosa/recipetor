@@ -1,63 +1,48 @@
 # Server setup
 
-Recipetor has two local services:
+Recipetor runs one Node service and uses a vendored Python extractor:
 
 ```
-Browser -> Recipetor app (Node/SQLite) -> extraction bridge -> Hermes -> model/provider
+Browser -> Recipetor app (Node/SQLite) -> extractor/recipe_extract.py
+          -> yt-dlp -> ffmpeg -> faster-whisper -> tesseract -> LLM
 ```
 
-The app owns auth, the import queue, deduplication, favorites/history, and
-storage. The bridge owns the prompt, model/provider choice, retries, timeouts,
-and Instagram extraction. The bridge is stateless and is never exposed publicly.
+The Node app owns auth, the import queue, deduplication, favorites/history,
+ratings, thumbnails, and storage. The Python pipeline downloads the post,
+transcribes narration, OCRs on-screen text, asks an OpenAI-compatible LLM for a
+strict recipe JSON, validates it, and writes a 480 px JPEG thumbnail.
+
+The extractor runs as a child process of the app for each queued job. Its stderr
+step lines are parsed live and surfaced in the queue UI.
 
 ## Requirements
 
-- Node.js 22.18 or newer (the bridge uses native TypeScript).
-- Hermes Agent installed and configured with `hermes setup`.
-- A Hermes web-search/extraction provider that can access public Instagram posts.
+- Node.js 22.18 or newer.
+- Python 3.10+ with `python3-venv`.
+- `ffmpeg`, `ffprobe`, `tesseract-ocr`, and `tesseract-ocr-por`.
+- Network access to Instagram (or TikTok/YouTube if you extend the allowlist).
+- An API key for an OpenAI-compatible LLM endpoint.
 
-## 1. Run the bridge
-
-```sh
-cd bridge
-npm install
-cp .env.example .env
-```
-
-Set at least:
+## 1. Set up the extractor
 
 ```sh
-BRIDGE_HOST=127.0.0.1
-BRIDGE_PORT=8790
-BRIDGE_TOKEN=<long random value>
-HERMES_BIN=/home/coxinha/.local/bin/hermes
+bash extractor/setup.sh
 ```
 
-Set the model explicitly:
+This installs the Python dependencies into `extractor/.venv` and creates the
+thumbnail media directory when the app first runs. The first extraction also
+downloads the faster-whisper model (about 500 MB for `small`, more for `medium`).
+
+Run one extraction manually to warm the model and verify access:
 
 ```sh
-BRIDGE_MODEL=nvidia/nemotron-3.5-lightning-30b-a3b
-BRIDGE_PROVIDER=nvidia
-BRIDGE_TIMEOUT_MS=900000
-BRIDGE_MAX_ATTEMPTS=2
-BRIDGE_VERBOSE=true
+extractor/.venv/bin/python extractor/recipe_extract.py \
+  'https://www.instagram.com/reel/ABC123/' \
+  --whisper-model medium --language auto --compute-nutrition \
+  --thumbnail-dir data/media
 ```
 
-This model reasons heavily and can take several minutes per post, so it needs a
-large timeout. Retries are useful because it occasionally returns an empty
-instruction list. For a much faster extraction, use `poolside/laguna-xs-2.1`
-instead. Leaving `BRIDGE_MODEL`/`BRIDGE_PROVIDER` empty uses the model/provider
-configured by `hermes model`.
-
-Start it:
-
-```sh
-npm start
-curl -s http://127.0.0.1:8790/health
-```
-
-See [`bridge/README.md`](bridge/README.md) for all bridge options, the HTTP
-contract, error codes, and systemd installation.
+stdout is recipe JSON; progress is printed to stderr as `[1/7] ...` steps.
 
 ## 2. Configure the app
 
@@ -67,18 +52,24 @@ npm run build
 cp .env.example .env
 ```
 
-Add the bridge settings to the app's `.env`:
+Add the extractor settings to the app's `.env`:
 
 ```sh
-RECIPE_EXTRACTOR=bridge
-RECIPE_BRIDGE_URL=http://127.0.0.1:8790
-RECIPE_BRIDGE_TOKEN=<same token as the bridge>
-RECIPE_BRIDGE_TIMEOUT_MS=1860000
+RECIPE_EXTRACTOR_PYTHON=./extractor/.venv/bin/python
+RECIPE_EXTRACTOR_SCRIPT=./extractor/recipe_extract.py
+RECIPE_EXTRACTOR_MODEL=beam-free
+RECIPE_EXTRACTOR_BASE_URL=https://opencode.ai/zen/go/v1
+RECIPE_EXTRACTOR_API_KEY=<your key>
+RECIPE_EXTRACTOR_WHISPER_MODEL=medium
+RECIPE_EXTRACTOR_LANGUAGE=auto
+RECIPE_EXTRACTOR_OCR_LANGS=por+eng
+RECIPE_EXTRACTOR_COMPUTE_NUTRITION=1
+RECIPE_EXTRACTOR_TIMEOUT_MS=900000
+RECIPETOR_MEDIA_DIR=./data/media
 ```
 
-`RECIPE_BRIDGE_TIMEOUT_MS` should exceed
-`BRIDGE_TIMEOUT_MS * BRIDGE_MAX_ATTEMPTS`, because the app waits for the bridge
-to finish retrying.
+If `RECIPE_EXTRACTOR_API_KEY` is empty, the script falls back to
+`OPENCODE_GO_API_KEY` or `~/.hermes/.env`.
 
 Set `RECIPETOR_HOST=0.0.0.0` and `RECIPETOR_PORT=8787` only if a reverse proxy on
 the home network needs to reach the app. Set `RECIPETOR_JWT_SECRET` to a long
@@ -89,94 +80,64 @@ verification and password reset codes can be delivered.
 `https://recipes.example.com`) to further restrict browser import requests. The
 app also limits imports to 10 per source connection per hour.
 
-## 3. Run both locally
-
-Terminal 1:
-
-```sh
-cd bridge
-npm run dev
-```
-
-Terminal 2:
+## 3. Run locally
 
 ```sh
 npm run dev
 ```
 
-The development command starts Vite and the app API. The database is created at
-`data/recipetor.sqlite`.
+The development command starts Vite and the app API. The extractor is spawned
+per queued job, so no separate service is needed. The database is created at
+`data/recipetor.sqlite`; thumbnails are written to `data/media`.
 
 ## 4. Deploy with systemd
 
-Install the bridge first, then the app.
-
-Bridge:
-
-```sh
-sudo cp bridge/systemd/recipetor-bridge.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now recipetor-bridge
-journalctl -u recipetor-bridge -f
-```
-
-App:
+Install the app, run `extractor/setup.sh` once, then start the app service:
 
 ```sh
 sudo systemctl restart recipetor
 ```
 
-The bridge unit expects `/opt/recipetor-bridge` and
-`/etc/recipetor-bridge.env`. Restart the app service (or process) so it picks
-up `RECIPE_BRIDGE_URL` and `RECIPE_BRIDGE_TOKEN` from its environment.
+The deploy script (`auto-pull.sh`) pulls the repo, rebuilds the app, and
+restarts the Node server. `extractor/.venv/` and `data/` are gitignored, so they
+survive the deploy's `git clean`.
 
 ## Changing the model
 
-Model choice lives in the bridge, not the app:
+Model and pipeline options live in the app environment:
 
 ```sh
-# /etc/recipetor-bridge.env
-BRIDGE_MODEL=nvidia/nemotron-3.5-lightning-30b-a3b
-BRIDGE_PROVIDER=nvidia
-BRIDGE_TIMEOUT_MS=900000
-BRIDGE_MAX_ATTEMPTS=2
-BRIDGE_VERBOSE=true
+RECIPE_EXTRACTOR_MODEL=beam-free
+RECIPE_EXTRACTOR_WHISPER_MODEL=medium
+RECIPE_EXTRACTOR_LANGUAGE=auto
 ```
+
+Restart the app after changing them. Check the active configuration:
 
 ```sh
-sudo systemctl restart recipetor-bridge
-curl -s http://127.0.0.1:8790/health
+curl -s http://127.0.0.1:8787/api/health
 ```
 
-The app does not need to be rebuilt or restarted. The health response shows the
-active model and provider.
+The health response reports `extractor.backend: "script"` and whether the
+configured interpreter and script are present.
 
-Check the model before deploying it with the bridge CLI:
+## Queue progress
 
-```sh
-cd bridge
-npm run cli -- "https://www.instagram.com/reel/ABC123/"
-```
-
-`meta.durationMs` shows the end-to-end time. The NVIDIA NIM
-`nvidia/nemotron-3.5-lightning-30b-a3b` model reasons for thousands of tokens
-and can take 5–10 minutes. `poolside/laguna-xs-2.1` completes real extractions
-in about 10 seconds but often omits per-ingredient nutrition.
-
-While a slow call runs, `BRIDGE_VERBOSE=true` logs a heartbeat to the journal:
-
-```sh
-sudo journalctl -u recipetor-bridge -f
-```
+Each queued job records its stage and a live `stageLabel` derived from the
+extractor's stderr:
 
 ```text
-[extract] https://... accepted (active=0, queued=0, timeout=900s, attempts=1)
-[hermes] starting: url=https://... model=nvidia/nemotron-3.5-lightning-30b-a3b ... timeout=900s
-[hermes] still running after 15.0s (no output yet)
-[hermes] first output after 284.6s
-[hermes] finished code=0 after 284.6s (stdout=2311 bytes, stderr=0 chars)
-[extract] https://... ok backend=hermes model=... attempts=1 duration=284700ms
+[1/7] Fetching post metadata (yt-dlp)
+[2/7] Downloading media (yt-dlp)
+[3/7] Transcribing audio (faster-whisper: medium)
+[4/7] Reading on-screen text (tesseract: por+eng)
+[5/7] Generating thumbnail (480px JPEG)
+[6/7] Extracting recipe (LLM: beam-free)
+[7/7] Validating recipe JSON
 ```
+
+The queue UI shows the current step name and percentage while the four stage
+bars track fetching, extracting, and saving.
 
 ## Testing
 
@@ -185,49 +146,16 @@ sudo journalctl -u recipetor-bridge -f
 npm test
 npm run build
 
-# bridge
-cd bridge
-npm test
-npm run typecheck
+# extractor
+extractor/.venv/bin/python extractor/recipe_extract.py \
+  'https://www.instagram.com/reel/ABC123/' --raw
 ```
-
-Extract without the app or HTTP server:
-
-```sh
-cd bridge
-npm run cli -- "https://www.instagram.com/reel/ABC123/"
-```
-
-Extract through the bridge:
-
-```sh
-curl -s -X POST http://127.0.0.1:8790/v1/extract \
-  -H "Authorization: Bearer $BRIDGE_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"url":"https://www.instagram.com/reel/ABC123/"}'
-```
-
-## Rollback
-
-The old in-process Hermes path is still available temporarily:
-
-```sh
-# app .env
-RECIPE_EXTRACTOR=hermes
-HERMES_BIN=/home/coxinha/.local/bin/hermes
-HERMES_TIMEOUT_MS=120000
-```
-
-Restart the app. Once the bridge has been stable, `server/hermes.js` and the
-`RECIPE_EXTRACTOR=hermes` path can be removed.
 
 ## Security
 
-- Bind the bridge to `127.0.0.1` and do not publish port 8790 through the
-  reverse proxy, Cloudflare tunnel, or firewall.
-- Keep the bridge token in `/etc/recipetor-bridge.env` with mode `0600`, and in
-  the app environment with the same value.
-- The browser never receives the bridge token or Hermes credentials.
-- Keep Hermes/provider credentials in Hermes' own configuration.
+- Keep the extractor API key in the app environment or `~/.hermes/.env`; it is
+  never sent to the browser.
+- Thumbnail URLs are unguessable hashes served from `/media/` and are intended
+  to be public.
 - Point the app's HTTPS reverse proxy at port 8787 only.
-- Back up `data/recipetor.sqlite` and `/etc/recipetor-bridge.env`.
+- Back up `data/recipetor.sqlite`, `data/media/`, and the app `.env`.

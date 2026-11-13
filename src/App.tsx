@@ -55,6 +55,7 @@ type QueueJob = {
   shortUrl: string;
   status: string;
   stage: string | null;
+  stageLabel?: string | null;
   progress: number;
   position: number | null;
   isMine: boolean;
@@ -70,6 +71,7 @@ type ImportJob = {
   id: string;
   status: string;
   stage: string;
+  stageLabel?: string | null;
   progress: number;
   error?: string | null;
   errorMessage?: string | null;
@@ -140,6 +142,7 @@ function jobStageIndex(job: Pick<QueueJob, "status" | "stage">) {
 }
 
 function jobStatusLine(job: QueueJob) {
+  if (job.stageLabel) return job.stageLabel;
   if (job.status === "pending") return "Waiting for your turn";
   if (job.stage === "fetching") return "Fetching from Instagram";
   if (job.stage === "saving") return "Saving recipe";
@@ -148,6 +151,7 @@ function jobStatusLine(job: QueueJob) {
 
 function jobRowSubtitle(job: QueueJob) {
   const position = job.position ? ` · position ${job.position}` : "";
+  if (job.stageLabel) return `${job.stageLabel}${position}`;
   if (job.status === "pending") return `Waiting${position}`;
   if (job.stage === "fetching") return `Fetching recipe${position}`;
   if (job.stage === "saving") return `Saving recipe${position}`;
@@ -1528,7 +1532,10 @@ function App() {
               <span className="queue-url">{ownJob.shortUrl}</span>
               {ownJob.position != null && <span className="position-badge">#{ownJob.position}</span>}
             </div>
-            <span className="queue-status">{jobStatusLine(ownJob)}</span>
+            <span className="queue-status">
+              {jobStatusLine(ownJob)}
+              {ownJob.progress != null ? ` · ${ownJob.progress}%` : ""}
+            </span>
             <div className="progress-bars">
               {STAGE_LABELS.map((label, index) => (
                 <span key={label} className={index <= jobStageIndex(ownJob) ? "done" : ""} />
@@ -1684,7 +1691,7 @@ function App() {
               />
             </div>
             <div className="progress-meta">
-              <span>{importStageLabel(importJob.stage)}</span>
+              <span>{importJob.stageLabel || importStageLabel(importJob.stage)}</span>
               <span>{importJob.progress}%</span>
             </div>
           </div>

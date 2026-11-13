@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -96,7 +96,7 @@ async function waitForJobs(store, expectedCount) {
 
 test("reports extractor health and backend", async () => {
   const { store, cleanup } = createTestStore();
-  const { server, baseUrl } = await startServer(store, { extractorBackend: "bridge" });
+  const { server, baseUrl } = await startServer(store, { extractorBackend: "script" });
 
   try {
     const response = await request(baseUrl, "/api/health");
@@ -104,7 +104,7 @@ test("reports extractor health and backend", async () => {
     const body = await response.json();
     assert.equal(body.ok, true);
     assert.equal(body.extractorAvailable, true);
-    assert.equal(body.extractor.backend, "bridge");
+    assert.equal(body.extractor.backend, "script");
   } finally {
     await stopServer(server);
     cleanup();
@@ -687,6 +687,81 @@ test("users who join an in-progress import get the finished recipe favorited", a
     assert.deepEqual(firstFavorites.favorites, [jobs[0].recipeId]);
     assert.deepEqual(secondFavorites.favorites, [jobs[0].recipeId]);
   } finally {
+    await stopServer(server);
+    cleanup();
+  }
+});
+
+test("serves extracted thumbnails from the media directory", async () => {
+  const { store, cleanup } = createTestStore();
+  const mediaDir = mkdtempSync(join(tmpdir(), "recipetor-media-"));
+  const image = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+  writeFileSync(join(mediaDir, "thumb.jpg"), image);
+  const { server, baseUrl } = await startServer(store, { mediaDir });
+
+  try {
+    const response = await fetch(`${baseUrl}/media/thumb.jpg`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "image/jpeg");
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), image);
+
+    const missing = await fetch(`${baseUrl}/media/nope.jpg`);
+    assert.equal(missing.status, 404);
+
+    const traversal = await fetch(`${baseUrl}/media/..%2Fsecret.jpg`);
+    assert.equal(traversal.status, 404);
+  } finally {
+    await stopServer(server);
+    cleanup();
+    rmSync(mediaDir, { recursive: true, force: true });
+  }
+});
+
+test("records live extractor progress and stage labels on queued jobs", async () => {
+  const { store, cleanup } = createTestStore();
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const { server, baseUrl } = await startServer(store, {
+    extractRecipe: async (_url, { onProgress } = {}) => {
+      onProgress?.({ stage: "fetching", progress: 14, label: "Fetching post metadata (yt-dlp)" });
+      onProgress?.({ stage: "extracting", progress: 57, label: "Reading on-screen text (tesseract: por+eng)" });
+      await gate;
+      onProgress?.({ stage: "saving", progress: 95, label: "Validating recipe JSON" });
+      return recipe;
+    },
+  });
+
+  try {
+    const user = await createVerifiedUser(baseUrl, "progress@example.com");
+    const response = await request(baseUrl, "/api/recipes/import", {
+      method: "POST",
+      token: user.token,
+      body: { url: "https://www.instagram.com/p/PROGRESS/" },
+    });
+    assert.equal(response.status, 202);
+    const job = (await response.json()).job;
+
+    let queued;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const body = await (await request(baseUrl, "/api/recipes/import/queue", { token: user.token })).json();
+      queued = body.jobs.find((item) => item.id === job.id);
+      if (queued?.stageLabel === "Reading on-screen text (tesseract: por+eng)") break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(queued.stage, "extracting");
+    assert.equal(queued.progress, 57);
+    assert.equal(queued.stageLabel, "Reading on-screen text (tesseract: por+eng)");
+
+    release();
+    await waitForJobs(store, 1);
+    const finished = store.getExtractionJob(job.id);
+    assert.equal(finished.status, "completed");
+    assert.equal(finished.stageLabel, null);
+    assert.ok(finished.recipeId);
+  } finally {
+    release?.();
     await stopServer(server);
     cleanup();
   }

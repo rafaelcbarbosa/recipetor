@@ -427,6 +427,7 @@ export function createRecipeStore(
       status TEXT NOT NULL DEFAULT 'pending',
       stage TEXT,
       progress INTEGER DEFAULT 0,
+      stage_label TEXT,
       error_message TEXT,
       recipe_id TEXT REFERENCES recipes(id) ON DELETE SET NULL,
       created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
@@ -436,6 +437,14 @@ export function createRecipeStore(
     CREATE INDEX IF NOT EXISTS extraction_jobs_url_idx ON extraction_jobs(url);
     CREATE INDEX IF NOT EXISTS extraction_jobs_status_idx ON extraction_jobs(status);
   `);
+
+  const jobColumns = new Set(
+    db.prepare("PRAGMA table_info(extraction_jobs)").all().map((column) => column.name),
+  );
+  if (!jobColumns.has("stage_label")) {
+    db.exec("ALTER TABLE extraction_jobs ADD COLUMN stage_label TEXT");
+    console.log("Migration: added stage_label column to extraction_jobs table");
+  }
 
   // Favorites and history tables
   db.exec(`
@@ -733,6 +742,7 @@ export function createRecipeStore(
       status: row.status,
       stage: row.stage,
       progress: row.progress,
+      stageLabel: row.stage_label ?? null,
       errorMessage: row.error_message,
       recipeId: row.recipe_id,
       createdBy: row.created_by,
@@ -750,6 +760,7 @@ export function createRecipeStore(
       status: row.status,
       stage: row.stage,
       progress: row.progress,
+      stageLabel: row.stage_label ?? null,
       errorMessage: row.error_message,
       recipeId: row.recipe_id,
       createdBy: row.created_by,
@@ -818,6 +829,7 @@ export function createRecipeStore(
     if (updates.status !== undefined) { fields.push("status = ?"); params.push(updates.status); }
     if (updates.stage !== undefined) { fields.push("stage = ?"); params.push(updates.stage); }
     if (updates.progress !== undefined) { fields.push("progress = ?"); params.push(updates.progress); }
+    if (updates.stageLabel !== undefined) { fields.push("stage_label = ?"); params.push(updates.stageLabel); }
     if (updates.errorMessage !== undefined) { fields.push("error_message = ?"); params.push(updates.errorMessage); }
     if (updates.recipeId !== undefined) { fields.push("recipe_id = ?"); params.push(updates.recipeId); }
     if (fields.length === 0) return;
@@ -841,6 +853,7 @@ export function createRecipeStore(
       status: row.status,
       stage: row.stage,
       progress: row.progress,
+      stageLabel: row.stage_label ?? null,
       position: position ?? null,
       isMine: Boolean(userId && row.created_by === userId),
       canRetry: !row.created_by || row.created_by === userId,
@@ -885,6 +898,7 @@ export function createRecipeStore(
         status: "pending",
         stage: "queued",
         progress: 0,
+        stageLabel: null,
         position: activeJobPositions().get(created.id) ?? null,
         isMine: Boolean(userId),
         canRetry: false,
