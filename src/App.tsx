@@ -43,6 +43,7 @@ type Recipe = {
   ratingCount?: number;
   isFavorite?: boolean;
   myRating?: number | null;
+  canDelete?: boolean;
   isExample?: boolean;
 };
 
@@ -1275,9 +1276,11 @@ function App() {
         ))}
       </section>
 
-      <button type="button" className="delete-recipe" onClick={() => void deleteRecipe(detail.id)}>
-        Delete recipe
-      </button>
+      {detail.canDelete && (
+        <button type="button" className="delete-recipe" onClick={() => void deleteRecipe(detail.id)}>
+          Delete recipe
+        </button>
+      )}
 
       <div className="detail-primary">
         <button

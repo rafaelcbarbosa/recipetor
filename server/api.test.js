@@ -208,29 +208,84 @@ test("favorites and history require auth and work for a signed-in user", async (
   }
 });
 
-test("deleting a recipe requires auth and ownership", async () => {
+test("only the original loader or the site owner can delete a recipe", async () => {
   const { store, cleanup } = createTestStore();
   const { server, baseUrl } = await startServer(store);
 
   try {
     const owner = await createVerifiedUser(baseUrl, "owner@example.com");
     const other = await createVerifiedUser(baseUrl, "other@example.com");
-    const saved = store.saveImported("https://www.instagram.com/p/DELETE/", recipe, owner.user.id);
+    const admin = await createVerifiedUser(baseUrl, "coxinha@gmail.com");
 
-    const anonymousDelete = await request(baseUrl, `/api/recipes/${saved.recipe.id}`, { method: "DELETE" });
+    function variant(title, ingredient) {
+      return {
+        ...recipe,
+        title,
+        ingredients: [
+          { amount: 1, unit: "unit", name: ingredient, nutrition: { calories: 10, protein: 1, carbs: 1, fat: 0 } },
+        ],
+      };
+    }
+
+    const legacy = store.saveImported("https://www.instagram.com/p/LEGACY/", variant("Legacy soup", "legacy beans"));
+    const ownerRecipe = store.saveImported(
+      "https://www.instagram.com/p/OWNER/",
+      variant("Owner pasta", "owner noodles"),
+      owner.user.id,
+    );
+    const adminRecipe = store.saveImported(
+      "https://www.instagram.com/p/ADMIN/",
+      variant("Admin pie", "admin apples"),
+      owner.user.id,
+    );
+
+    const anonymousDelete = await request(baseUrl, `/api/recipes/${ownerRecipe.recipe.id}`, { method: "DELETE" });
     assert.equal(anonymousDelete.status, 401);
 
-    const otherDelete = await request(baseUrl, `/api/recipes/${saved.recipe.id}`, {
+    const otherDelete = await request(baseUrl, `/api/recipes/${ownerRecipe.recipe.id}`, {
       method: "DELETE",
       token: other.token,
     });
     assert.equal(otherDelete.status, 403);
 
-    const ownerDelete = await request(baseUrl, `/api/recipes/${saved.recipe.id}`, {
+    const legacyForOther = await request(baseUrl, `/api/recipes/${legacy.recipe.id}`, {
+      method: "DELETE",
+      token: other.token,
+    });
+    assert.equal(legacyForOther.status, 403);
+
+    const ownerList = await (await request(baseUrl, "/api/recipes", { token: owner.token })).json();
+    assert.equal(ownerList.recipes.find((item) => item.id === ownerRecipe.recipe.id).canDelete, true);
+    assert.equal(ownerList.recipes.find((item) => item.id === legacy.recipe.id).canDelete, false);
+
+    const otherList = await (await request(baseUrl, "/api/recipes", { token: other.token })).json();
+    assert.equal(otherList.recipes.find((item) => item.id === ownerRecipe.recipe.id).canDelete, false);
+
+    const adminList = await (await request(baseUrl, "/api/recipes", { token: admin.token })).json();
+    assert.equal(adminList.recipes.find((item) => item.id === ownerRecipe.recipe.id).canDelete, true);
+    assert.equal(adminList.recipes.find((item) => item.id === legacy.recipe.id).canDelete, true);
+
+    const anonymousList = await (await request(baseUrl, "/api/recipes")).json();
+    assert.equal(anonymousList.recipes.find((item) => item.id === ownerRecipe.recipe.id).canDelete, false);
+
+    const ownerDelete = await request(baseUrl, `/api/recipes/${ownerRecipe.recipe.id}`, {
       method: "DELETE",
       token: owner.token,
     });
     assert.equal(ownerDelete.status, 200);
+
+    const adminDelete = await request(baseUrl, `/api/recipes/${adminRecipe.recipe.id}`, {
+      method: "DELETE",
+      token: admin.token,
+    });
+    assert.equal(adminDelete.status, 200);
+
+    const legacyAdminDelete = await request(baseUrl, `/api/recipes/${legacy.recipe.id}`, {
+      method: "DELETE",
+      token: admin.token,
+    });
+    assert.equal(legacyAdminDelete.status, 200);
+
     assert.equal(store.list().length, 0);
   } finally {
     await stopServer(server);

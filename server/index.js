@@ -12,6 +12,7 @@ const MAX_REQUEST_BYTES = 2048;
 const IMPORT_LIMIT = 10;
 const IMPORT_WINDOW_MS = 60 * 60 * 1000;
 const JWT_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const ADMIN_EMAIL = (process.env.RECIPETOR_ADMIN_EMAIL || "coxinha@gmail.com").trim().toLowerCase();
 
 // Keep sessions valid across restarts: use RECIPETOR_JWT_SECRET when provided,
 // otherwise persist a generated secret next to the database.
@@ -105,12 +106,19 @@ function verifyJwt(token) {
   }
 }
 
-function extractUserId(request) {
+function extractUser(request) {
   const authHeader = request.headers.authorization;
   if (!authHeader?.startsWith("Bearer ")) return null;
   const token = authHeader.slice(7);
-  const payload = verifyJwt(token);
-  return payload?.sub ?? null;
+  return verifyJwt(token);
+}
+
+function extractUserId(request) {
+  return extractUser(request)?.sub ?? null;
+}
+
+function isAdminRequest(request) {
+  return extractUser(request)?.email?.trim().toLowerCase() === ADMIN_EMAIL;
 }
 
 export function canonicalizeInstagramUrl(input) {
@@ -470,12 +478,13 @@ export function createServer({
       return jsonResponse(response, 200, { message: "Account deleted successfully" });
     }
     if (pathname === "/api/recipes" && request.method === "GET") {
-      return jsonResponse(response, 200, { recipes: store.list(extractUserId(request)) });
+      const userId = extractUserId(request);
+      return jsonResponse(response, 200, { recipes: store.list(userId, isAdminRequest(request)) });
     }
     const singleRecipeMatch = pathname.match(/^\/api\/recipes\/([^/]+)$/);
     if (singleRecipeMatch && request.method === "GET") {
       const recipeId = singleRecipeMatch[1];
-      const recipe = store.getRecipe(recipeId, extractUserId(request));
+      const recipe = store.getRecipe(recipeId, extractUserId(request), isAdminRequest(request));
       if (!recipe) return jsonResponse(response, 404, { error: "Recipe not found." });
       return jsonResponse(response, 200, { recipe });
     }
@@ -487,7 +496,7 @@ export function createServer({
       const userId = extractUserId(request);
 
       // Check if recipe already exists
-      const existing = store.getBySource(url, userId);
+      const existing = store.getBySource(url, userId, isAdminRequest(request));
       if (existing) return jsonResponse(response, 200, { recipe: existing, duplicate: true, reason: "source" });
 
       // Check for existing job for this URL
@@ -570,9 +579,9 @@ export function createServer({
 
       const owner = store.getRecipeOwner(deleteMatch[1]);
       if (owner === undefined) return jsonResponse(response, 404, { error: "Recipe not found." });
-      // Legacy recipes have no owner; any signed-in user may remove them.
-      if (owner && owner !== userId) {
-        return jsonResponse(response, 403, { error: "Only the recipe's creator can delete it." });
+      // The site owner can remove any recipe. Otherwise only the original loader may remove it.
+      if (!isAdminRequest(request) && owner !== userId) {
+        return jsonResponse(response, 403, { error: "Only the recipe's creator or the site owner can delete it." });
       }
 
       store.deleteRecipe(deleteMatch[1]);
@@ -633,7 +642,7 @@ export function createServer({
     if (pathname === "/api/history" && request.method === "GET") {
       const userId = extractUserId(request);
       if (!userId) return jsonResponse(response, 401, { error: "Authentication required." });
-      const history = store.getUserHistory(userId);
+      const history = store.getUserHistory(userId, isAdminRequest(request));
       return jsonResponse(response, 200, { history });
     }
 

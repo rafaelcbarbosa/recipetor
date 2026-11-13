@@ -167,7 +167,7 @@ function verifyPassword(password, salt, hash) {
   return hashPassword(password, salt) === hash;
 }
 
-function toRecipe(row, sourceRows) {
+function toRecipe(row, sourceRows, userId = null, isAdmin = false) {
   const sourceUrls = sourceRows.map((source) => source.url);
   const totals = row.totals_json ? JSON.parse(row.totals_json) : null;
   return {
@@ -196,6 +196,7 @@ function toRecipe(row, sourceRows) {
     sourceCount: sourceUrls.length,
     ratingAvg: row.rating_avg ?? 0,
     ratingCount: row.rating_count ?? 0,
+    canDelete: Boolean(userId && (isAdmin || row.user_id === userId)),
     isExample: false,
   };
 }
@@ -827,10 +828,10 @@ export function createRecipeStore(
     addHistoryStmt.run(userId, recipeId, action, now);
   }
 
-  function getUserHistory(userId) {
+  function getUserHistory(userId, isAdmin = false) {
     const rows = historyByUser.all(userId);
     return rows.flatMap((row) => {
-      const recipe = getRecipe(row.recipe_id, userId);
+      const recipe = getRecipe(row.recipe_id, userId, isAdmin);
       return recipe ? [{ ...recipe, action: row.action, createdAt: row.created_at }] : [];
     });
   }
@@ -849,10 +850,10 @@ export function createRecipeStore(
     };
   }
 
-  function getRecipe(id, userId = null) {
+  function getRecipe(id, userId = null, isAdmin = false) {
     const row = recipeById.get(id);
     if (!row) return null;
-    return decorateRecipe(toRecipe(row, sourcesByRecipe.all(id)), userId);
+    return decorateRecipe(toRecipe(row, sourcesByRecipe.all(id), userId, isAdmin), userId);
   }
 
   // Returns the owner user id, null for legacy recipes without an owner,
@@ -862,16 +863,16 @@ export function createRecipeStore(
     return row ? row.user_id ?? null : undefined;
   }
 
-  function getBySource(url, userId = null) {
+  function getBySource(url, userId = null, isAdmin = false) {
     const source = db.prepare("SELECT recipe_id FROM recipe_sources WHERE url = ?").get(url);
-    return source ? getRecipe(source.recipe_id, userId) : null;
+    return source ? getRecipe(source.recipe_id, userId, isAdmin) : null;
   }
 
-  function list(userId = null) {
+  function list(userId = null, isAdmin = false) {
     return db
       .prepare("SELECT id FROM recipes ORDER BY updated_at DESC, title COLLATE NOCASE ASC")
       .all()
-      .map(({ id }) => getRecipe(id, userId));
+      .map(({ id }) => getRecipe(id, userId, isAdmin));
   }
 
   function deleteRecipe(id) {
@@ -923,7 +924,7 @@ export function createRecipeStore(
     };
   }
 
-  function saveImported(url, recipe, userId) {
+  function saveImported(url, recipe, userId, isAdmin = false) {
     const titleKey = normalizeText(recipe.title);
     const recipeFingerprint = fingerprint(titleKey, recipe.ingredients);
     const now = new Date().toISOString();
@@ -932,7 +933,7 @@ export function createRecipeStore(
     try {
       const source = db.prepare("SELECT recipe_id FROM recipe_sources WHERE url = ?").get(url);
       if (source) {
-        const existing = getRecipe(source.recipe_id, userId);
+        const existing = getRecipe(source.recipe_id, userId, isAdmin);
         if (userId && addFavorite(userId, source.recipe_id)) addToHistory(userId, source.recipe_id, "added");
         db.exec("COMMIT");
         return { recipe: existing, duplicate: true, reason: "source" };
@@ -964,7 +965,7 @@ export function createRecipeStore(
           facets.imageUrl,
           match.id,
         );
-        const saved = getRecipe(match.id, userId);
+        const saved = getRecipe(match.id, userId, isAdmin);
         if (userId && addFavorite(userId, match.id)) addToHistory(userId, match.id, "added");
         db.exec("COMMIT");
         return { recipe: saved, duplicate: true, reason: "recipe" };
@@ -1003,7 +1004,7 @@ export function createRecipeStore(
       );
       db.prepare("INSERT INTO recipe_sources (url, recipe_id, created_at) VALUES (?, ?, ?)")
         .run(url, id, now);
-      const saved = getRecipe(id, userId);
+      const saved = getRecipe(id, userId, isAdmin);
       
       // Auto-favorite and add to history for the user who added the recipe
       if (userId && addFavorite(userId, id)) {
