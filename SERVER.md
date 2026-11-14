@@ -54,7 +54,7 @@ stdout is recipe JSON; progress is printed to stderr as `[1/7] ...` steps.
 
 ## 2. Remote extractor service (recommended for low-RAM hosts)
 
-On the extractor host:
+On the extractor host (for example the home server at `192.168.1.190`):
 
 ```sh
 cd extractor
@@ -79,6 +79,13 @@ Endpoints:
 | `GET` | `/thumbnails/{id}.jpg` | no | cached 480 px JPEG |
 | `POST` | `/extract` | `X-API-Token` | synchronous compatibility endpoint |
 
+The current deployment lets the app host reach the extractor directly on the
+LAN. Restrict the port to the app host at the firewall:
+
+```sh
+sudo ufw allow from <app-host-ip> to any port 8099 proto tcp
+```
+
 If the app host cannot reach the extractor host directly (for example, a Wi-Fi
 client-isolation network), open a reverse tunnel from the extractor host to the
 app host:
@@ -102,7 +109,10 @@ cp .env.example .env
 ### Remote mode (app host)
 
 ```sh
-RECIPE_EXTRACTOR_URL=http://127.0.0.1:8099
+# Direct LAN connection:
+RECIPE_EXTRACTOR_URL=http://192.168.1.190:8099
+# Or through the reverse tunnel:
+# RECIPE_EXTRACTOR_URL=http://127.0.0.1:8099
 RECIPE_EXTRACTOR_TOKEN=<same value as RECIPE_API_TOKEN>
 RECIPE_EXTRACTOR_COMPUTE_NUTRITION=1
 RECIPE_EXTRACTOR_TIMEOUT_MS=900000
