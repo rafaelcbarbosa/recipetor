@@ -934,11 +934,18 @@ export function createRecipeStore(
       const updated = Date.parse(row.updated_at);
       return Number.isFinite(updated) && now - updated <= FINISHED_JOB_MAX_AGE_MS;
     });
+    const failedByUrl = new Map();
+    for (const row of failedRows) {
+      const existing = failedByUrl.get(row.url);
+      if (!existing || String(row.updated_at) >= String(existing.updated_at)) {
+        failedByUrl.set(row.url, row);
+      }
+    }
     const completedRows = rows
       .filter((row) => row.status === "completed")
       .sort((left, right) => String(right.updated_at).localeCompare(String(left.updated_at)))
       .slice(0, COMPLETED_JOB_LIMIT);
-    const visibleRows = [...activeRows, ...failedRows, ...completedRows];
+    const visibleRows = [...activeRows, ...failedByUrl.values(), ...completedRows];
     const watched = userId
       ? new Set(watchersByUser.all(userId).map((row) => row.job_id))
       : new Set();

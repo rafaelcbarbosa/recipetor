@@ -1,5 +1,5 @@
 {
-  "hash": "7d099af",
-  "date": "2026-11-13 20:32:21 -0600",
-  "message": "Backfill job creators as watchers"
+  "hash": "2fbdc02",
+  "date": "2026-11-14 10:24:25 -0600",
+  "message": "Add queue failure flow, manual recipes, and favorites gate"
 }

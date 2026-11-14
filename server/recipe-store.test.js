@@ -407,6 +407,8 @@ test("hides old failures and caps completed jobs in the public queue", () => {
     const user = store.createUser("queue@example.com", "secret1");
     const active = store.createExtractionJob("https://www.instagram.com/p/ACTIVE/", user.id);
 
+    const duplicateFail = store.createExtractionJob("https://www.instagram.com/p/FAIL-RECENT/", user.id);
+    store.updateExtractionJob(duplicateFail.id, { status: "failed", stage: "failed", progress: 100 });
     const recentFail = store.createExtractionJob("https://www.instagram.com/p/FAIL-RECENT/", user.id);
     store.updateExtractionJob(recentFail.id, { status: "failed", stage: "failed", progress: 100 });
 
