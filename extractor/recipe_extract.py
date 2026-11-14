@@ -270,10 +270,17 @@ def instagram_cookies() -> Path | None:
     return path
 
 
+def _cookies_for(url: str) -> Path | None:
+    """Only hand the Instagram session to Instagram requests."""
+    if "instagram.com" not in url:
+        return None
+    return instagram_cookies()
+
+
 def fetch_metadata(url: str) -> dict:
     try:
         cmd = ["yt-dlp", "-J", "--no-warnings"]
-        cookies = instagram_cookies()
+        cookies = _cookies_for(url)
         if cookies:
             cmd += ["--cookies", str(cookies)]
         cmd.append(url)
@@ -296,7 +303,7 @@ def _media_files(directory: Path) -> list[Path]:
 def _download_with_ytdlp(url: str, work: Path) -> list[Path]:
     template = str(work / "%(autonumber)03d.%(ext)s")
     cmd = ["yt-dlp", "--no-warnings", "--no-part", "-o", template]
-    cookies = instagram_cookies()
+    cookies = _cookies_for(url)
     if cookies:
         cmd += ["--cookies", str(cookies)]
     cmd.append(url)
@@ -338,7 +345,7 @@ def _download_with_gallery_dl(url: str, work: Path) -> list[Path]:
     target = work / "gallery"
     target.mkdir(parents=True, exist_ok=True)
     cmd = ["gallery-dl", "--no-mtime", "--write-metadata", "-D", str(target)]
-    cookies = instagram_cookies()
+    cookies = _cookies_for(url)
     if cookies:
         cmd += ["--cookies", str(cookies)]
     cmd.append(url)
@@ -375,7 +382,7 @@ def download_media(url: str, work: Path, meta: dict | None = None) -> list[Path]
         log(f"[warn] using gallery-dl ({len(files)} file(s))")
         return files
     except DownloadError as exc:
-        if not instagram_cookies() and "logged-in session" in str(exc):
+        if not _cookies_for(url) and "logged-in session" in str(exc):
             # Photo posts cannot be fetched anonymously; do not spend minutes
             # letting yt-dlp retry every slide just to fail the same way.
             raise
