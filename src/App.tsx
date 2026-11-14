@@ -84,7 +84,7 @@ type Tab = "recipes" | "add" | "favorites";
 type DetailOrigin = "library" | "favorites" | "queue" | "history";
 type IngredientSheetMode = "unit" | "quantity";
 type IngredientSheetState = { index: number; mode: IngredientSheetMode };
-type FailureDialogState = { jobId: string; message: string };
+type FailureDialogState = { jobId: string; message: string; url: string };
 type ManualIngredient = { amount: string; unit: string; name: string; kcal: string };
 type ServerState = "checking" | "ready" | "extractor-missing" | "offline";
 
@@ -957,13 +957,29 @@ function App() {
     void saveIngredient(ingredientSheet.index, { amount, unit: ingredientUnitDraft });
   }
 
-  async function retryFailedJob(jobId: string) {
+  async function retryFailedJob(jobId: string, url?: string) {
     if (!user) {
       setAuthMode("login");
       setNotice("Sign in to try again.");
       return;
     }
     try {
+      if (url) {
+        // Re-submitting registers the signed-in user as a watcher first.
+        const check = await apiFetch("/api/recipes/import", {
+          method: "POST",
+          body: JSON.stringify({ url }),
+        });
+        const checkData = (await check.json().catch(() => ({}))) as { recipe?: Recipe };
+        if (check.ok && checkData.recipe) {
+          setFailureDialog(null);
+          registerImportedRecipe(checkData.recipe, "This link was already saved. Here's the recipe.", {
+            openDetail: true,
+            switchTab: true,
+          });
+          return;
+        }
+      }
       const response = await apiFetch(`/api/recipes/import/retry/${jobId}`, { method: "POST" });
       const data = (await response.json().catch(() => ({}))) as { job?: ImportJob; error?: string };
       if (!response.ok || !data.job) throw new Error(data.error ?? "Couldn't retry this import.");
@@ -1186,6 +1202,7 @@ function App() {
         setNotice("");
         setFailureDialog({
           jobId: result.job.id,
+          url: url.href,
           message:
             result.message ??
             "This link was tried before but it was not possible to extract the recipe.",
@@ -2278,7 +2295,7 @@ function App() {
                 <button
                   type="button"
                   className="primary-btn"
-                  onClick={() => void retryFailedJob(failureDialog.jobId)}
+                  onClick={() => void retryFailedJob(failureDialog.jobId, failureDialog.url)}
                 >
                   Try again
                 </button>

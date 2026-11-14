@@ -1,5 +1,5 @@
 {
-  "hash": "2fbdc02",
-  "date": "2026-11-14 10:24:25 -0600",
-  "message": "Add queue failure flow, manual recipes, and favorites gate"
+  "hash": "05b68a1",
+  "date": "2026-11-14 10:26:47 -0600",
+  "message": "Deduplicate failed queue rows by link"
 }
