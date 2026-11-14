@@ -171,6 +171,8 @@ Sections: app/extractor status, uptime, version; recipe totals, by category, by 
 
 A **Clear queue history** button on the Recent extractions card deletes completed and failed jobs only. Imported recipes are never deleted.
 
+Each recent extraction row with captured output has a **View logs** action that opens a modal with the extractor's log lines (last 200 lines). Logs are kept for both successful and failed extractions; failures also show the stored error message above the log.
+
 Usage events are retained **90 days**. Signed-out activity is anonymous; signed-in activity stores the user so the admin can see top users and latest accesses.
 
 ### 2.8 Import, queue & favorites rules
@@ -189,7 +191,7 @@ Usage events are retained **90 days**. Signed-out activity is anonymous; signed-
 - **Recipe:** id, title, image_url (nullable), cuisine, meal_types[], diet_tags[], custom_tags[], prep_time_minutes, base_servings, ingredients[{name, amount, unit, kcal}], steps[], nutrition_per_portion {kcal, protein_g, carbs_g, fat_g}, rating_avg, rating_count, source_posts[], can_delete.
 - **Ingredient editing:** each line accepts a unit change among compatible units (weight/volume) and a persisted amount/unit when either is missing. Missing calories are inferred from other recipes at save time.
 - **Per user:** is_favorite, my_rating (1 to 5 or none).
-- **Queue job:** id, url (full post link), thumbnail_url (post screenshot, kept on failures too), status (pending, processing, completed, failed), stage, stage_label (live extractor step), progress, position, is_mine (creator or watcher), can_retry, recipe_id, error, started_at, updated_at.
+- **Queue job:** id, url (full post link), thumbnail_url (post screenshot, kept on failures too), logs (extractor output, kept for successes and failures), status (pending, processing, completed, failed), stage, stage_label (live extractor step), progress, position, is_mine (creator or watcher), can_retry, recipe_id, error, started_at, updated_at.
 - **Watchers:** job_id, user_id. The creator is always a watcher; watchers receive the same queue rights and completion favorite/history as the creator.
 - **Usage events:** id, user_id (nullable for signed-out activity), event (`app_open`, `recipe_view`, `favorite`, `rating`, `import`, `manual_entry`), recipe_id, created_at. Retained 90 days.
 - **Telemetry:** aggregates over events, jobs, recipes, users, favorites and ratings. Admin-only; includes emails for signed-in activity.

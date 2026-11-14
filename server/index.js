@@ -326,6 +326,8 @@ export function createServer({
             error && typeof error === "object" && typeof error.thumbnailUrl === "string"
               ? error.thumbnailUrl
               : null;
+          const extractionLogs =
+            error && typeof error === "object" && typeof error.logs === "string" ? error.logs : null;
           console.error(`[queue] Job ${jobId}: Extraction failed:`, errorMsg);
           store.updateExtractionJob(jobId, {
             status: "failed",
@@ -334,6 +336,7 @@ export function createServer({
             stageLabel: null,
             errorMessage: `Extraction failed: ${errorMsg}`,
             ...(thumbnailUrl ? { thumbnailUrl } : {}),
+            ...(extractionLogs ? { logs: extractionLogs } : {}),
           });
           continue;
         }
@@ -341,6 +344,10 @@ export function createServer({
         store.updateExtractionJob(jobId, { status: "processing", stage: "saving", progress: 70, stageLabel: "Saving recipe" });
         console.log(`[queue] Job ${jobId}: Extraction finished, saving recipe`);
 
+        const extractionLogs =
+          extracted && typeof extracted === "object" && typeof extracted.extractorLogs === "string"
+            ? extracted.extractorLogs
+            : null;
         const saved = store.saveImported(url, extracted, userId);
         store.recordEvent(userId, "import", saved.recipe.id);
         console.log(`[queue] Job ${jobId}: Recipe saved: ${saved.recipe.id}, duplicate: ${saved.duplicate}`);
@@ -359,6 +366,7 @@ export function createServer({
           progress: 100,
           stageLabel: null,
           recipeId: saved.recipe.id,
+          ...(extractionLogs ? { logs: extractionLogs } : {}),
         });
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : "Unknown error";
@@ -846,6 +854,15 @@ export function createServer({
       }
       const removed = store.clearFinishedExtractionJobs();
       return jsonResponse(response, 200, { removed });
+    }
+    const extractionLogsMatch = pathname.match(/^\/api\/telemetry\/extraction\/([^/]+)\/logs$/);
+    if (extractionLogsMatch && request.method === "GET") {
+      if (!isAdminRequest(request)) {
+        return jsonResponse(response, 401, { error: "Admin authentication required." });
+      }
+      const logs = store.getExtractionLogs(extractionLogsMatch[1]);
+      if (logs === null) return jsonResponse(response, 404, { error: "Extraction not found." });
+      return jsonResponse(response, 200, { id: extractionLogsMatch[1], logs });
     }
     if (pathname === "/api/events/app-open" && request.method === "POST") {
       checkSameOrigin(request);

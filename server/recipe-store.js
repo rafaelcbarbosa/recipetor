@@ -432,6 +432,7 @@ export function createRecipeStore(
       progress INTEGER DEFAULT 0,
       stage_label TEXT,
       thumbnail_url TEXT,
+      logs TEXT,
       error_message TEXT,
       recipe_id TEXT REFERENCES recipes(id) ON DELETE SET NULL,
       created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
@@ -472,6 +473,10 @@ export function createRecipeStore(
   if (!jobColumns.has("thumbnail_url")) {
     db.exec("ALTER TABLE extraction_jobs ADD COLUMN thumbnail_url TEXT");
     console.log("Migration: added thumbnail_url column to extraction_jobs table");
+  }
+  if (!jobColumns.has("logs")) {
+    db.exec("ALTER TABLE extraction_jobs ADD COLUMN logs TEXT");
+    console.log("Migration: added logs column to extraction_jobs table");
   }
 
   // Anonymous-friendly usage events for the telemetry dashboard.
@@ -926,6 +931,7 @@ export function createRecipeStore(
     if (updates.stageLabel !== undefined) { fields.push("stage_label = ?"); params.push(updates.stageLabel); }
     if (updates.startedAt !== undefined) { fields.push("started_at = ?"); params.push(updates.startedAt); }
     if (updates.thumbnailUrl !== undefined) { fields.push("thumbnail_url = ?"); params.push(updates.thumbnailUrl); }
+    if (updates.logs !== undefined) { fields.push("logs = ?"); params.push(updates.logs); }
     if (updates.errorMessage !== undefined) { fields.push("error_message = ?"); params.push(updates.errorMessage); }
     if (updates.recipeId !== undefined) { fields.push("recipe_id = ?"); params.push(updates.recipeId); }
     if (fields.length === 0) return;
@@ -1529,6 +1535,12 @@ export function createRecipeStore(
     }
   }
 
+  function getExtractionLogs(id) {
+    const row = jobById.get(id);
+    if (!row) return null;
+    return row.logs ?? "";
+  }
+
   function registeredUsers() {
     return db
       .prepare(
@@ -1603,14 +1615,17 @@ export function createRecipeStore(
       maxMs: durations.length ? Math.max(...durations) : null,
       recent: db
         .prepare(
-          `SELECT url, status, started_at AS startedAt, updated_at AS updatedAt,
+          `SELECT id, url, status, error_message AS errorMessage,
+                  started_at AS startedAt, updated_at AS updatedAt,
                   CASE WHEN started_at IS NOT NULL
-                    THEN CAST(${durationExpr} AS INTEGER) END AS durationMs
+                    THEN CAST(${durationExpr} AS INTEGER) END AS durationMs,
+                  CASE WHEN logs IS NOT NULL AND logs != '' THEN 1 ELSE 0 END AS hasLogs
            FROM extraction_jobs
            WHERE status IN ('completed', 'failed')
            ORDER BY updated_at DESC LIMIT 10`,
         )
-        .all(),
+        .all()
+        .map((row) => ({ ...row, hasLogs: Boolean(row.hasLogs) })),
     };
 
     const active7 = count(
@@ -1728,6 +1743,7 @@ export function createRecipeStore(
     listRecoverableExtractionJobs,
     updateExtractionJob,
     recordEvent,
+    getExtractionLogs,
     registeredUsers,
     clearFinishedExtractionJobs,
     telemetryData,

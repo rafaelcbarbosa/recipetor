@@ -124,6 +124,7 @@ export function createScriptExtractor({
       let stdout = "";
       let stdoutBytes = 0;
       let stderrTail = "";
+      const logLines = [];
       let stderrBytes = 0;
       let thumbnailPath = null;
       let timedOut = false;
@@ -146,6 +147,11 @@ export function createScriptExtractor({
         if (timer) clearTimeout(timer);
       }
 
+      function withLogs(error) {
+        if (logLines.length > 0) error.logs = logLines.join("\n");
+        return error;
+      }
+
       timer = setTimeout(() => {
         timedOut = true;
         terminate("SIGKILL");
@@ -157,6 +163,8 @@ export function createScriptExtractor({
           stderrTail = `${stderrTail}${line}\n`.slice(-MAX_STDERR_BYTES);
           stderrBytes += line.length + 1;
         }
+        logLines.push(line);
+        if (logLines.length > 200) logLines.shift();
 
         const thumbnailMatch = THUMBNAIL_RE.exec(line);
         if (thumbnailMatch) thumbnailPath = thumbnailMatch[1].trim();
@@ -199,11 +207,11 @@ export function createScriptExtractor({
         finish();
 
         if (timedOut) {
-          rejectPromise(new Error("The recipe extractor timed out."));
+          rejectPromise(withLogs(new Error("The recipe extractor timed out.")));
           return;
         }
         if (overflow) {
-          rejectPromise(new Error("The recipe extractor returned too much data."));
+          rejectPromise(withLogs(new Error("The recipe extractor returned too much data.")));
           return;
         }
 
@@ -216,14 +224,16 @@ export function createScriptExtractor({
             if (resolve(candidate) !== destination) copyFileSync(candidate, destination);
             error.thumbnailUrl = `/media/${basename(destination)}`;
           }
-          rejectPromise(error);
+          rejectPromise(withLogs(error));
           return;
         }
         if (code !== 0 || !payload) {
           rejectPromise(
-            new Error(
-              stderrTail.trim().split("\n").slice(-1)[0] ||
-                "The recipe extractor returned an invalid response.",
+            withLogs(
+              new Error(
+                stderrTail.trim().split("\n").slice(-1)[0] ||
+                  "The recipe extractor returned an invalid response.",
+              ),
             ),
           );
           return;
@@ -233,7 +243,13 @@ export function createScriptExtractor({
         try {
           recipe = validateRecipeResult(payload);
         } catch (error) {
-          rejectPromise(error instanceof Error ? error : new Error("The recipe extractor returned an invalid recipe."));
+          rejectPromise(
+            withLogs(
+              error instanceof Error
+                ? error
+                : new Error("The recipe extractor returned an invalid recipe."),
+            ),
+          );
           return;
         }
 
@@ -244,6 +260,7 @@ export function createScriptExtractor({
           recipe.imageUrl = `/media/${basename(destination)}`;
         }
 
+        if (logLines.length > 0) recipe.extractorLogs = logLines.join("\n");
         resolvePromise(recipe);
       });
     });

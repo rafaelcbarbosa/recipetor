@@ -78,6 +78,7 @@ test("polls a remote job, reports progress, and stores the thumbnail", async () 
         recipe,
         error: null,
         thumbnail_id: "thumb-1",
+        logs: "[extract] fetched post\n[extract] saved recipe",
       });
     }
     if (request.url === "/thumbnails/thumb-1.jpg") {
@@ -103,6 +104,7 @@ test("polls a remote job, reports progress, and stores the thumbnail", async () 
 
     assert.equal(result.title, "Remote recipe");
     assert.equal(result.imageUrl, "/media/thumb-1.jpg");
+    assert.equal(result.extractorLogs, "[extract] fetched post\n[extract] saved recipe");
     assert.deepEqual(postedBody, {
       url: "https://www.instagram.com/p/REMOTE/",
       compute_nutrition: true,
@@ -196,6 +198,7 @@ test("keeps the thumbnail when a remote job fails", async () => {
         error: "It is only a teaser.",
         error_code: "NO_RECIPE",
         thumbnail_id: "fail-thumb",
+        logs: "[extract] no recipe found",
       });
     }
     if (request.url === "/thumbnails/fail-thumb.jpg") {
@@ -225,6 +228,7 @@ test("keeps the thumbnail when a remote job fails", async () => {
     assert.ok(failure);
     assert.match(failure.message, /No complete recipe found in this post/);
     assert.equal(failure.thumbnailUrl, "/media/fail-thumb.jpg");
+    assert.equal(failure.logs, "[extract] no recipe found");
     assert.ok(existsSync(join(mediaDir, "fail-thumb.jpg")));
   } finally {
     await new Promise((resolvePromise) => server.close(resolvePromise));

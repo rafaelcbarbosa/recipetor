@@ -1122,3 +1122,73 @@ test("keeps the screenshot on a failed extraction", async () => {
     cleanup();
   }
 });
+
+test("keeps extraction logs for successful and failed jobs and serves them to the admin", async () => {
+  const { store, cleanup } = createTestStore();
+  const failure = new Error("No complete recipe found in this post.");
+  failure.logs = "[extract] no recipe in caption";
+  const { server, baseUrl } = await startServer(store, {
+    extractRecipe: async (url) => {
+      if (url.includes("FAIL")) throw failure;
+      return { ...recipe, extractorLogs: "[extract] parsed 2 ingredients" };
+    },
+  });
+
+  try {
+    const user = await createVerifiedUser(baseUrl, "logs-user@example.com");
+    const admin = await createVerifiedUser(baseUrl, "coxinha@gmail.com");
+
+    const ok = await request(baseUrl, "/api/recipes/import", {
+      method: "POST",
+      token: user.token,
+      body: { url: "https://www.instagram.com/p/LOG-OK/" },
+    });
+    assert.equal(ok.status, 202);
+    const okJobId = (await ok.json()).job.id;
+
+    const fail = await request(baseUrl, "/api/recipes/import", {
+      method: "POST",
+      token: user.token,
+      body: { url: "https://www.instagram.com/p/LOG-FAIL/" },
+    });
+    assert.equal(fail.status, 202);
+    const failJobId = (await fail.json()).job.id;
+
+    await waitForJobs(store, 2);
+    assert.equal(store.getExtractionLogs(okJobId), "[extract] parsed 2 ingredients");
+    assert.equal(store.getExtractionLogs(failJobId), "[extract] no recipe in caption");
+
+    const telemetry = await (
+      await request(baseUrl, "/api/telemetry", { token: admin.token })
+    ).json();
+    const okRow = telemetry.extraction.recent.find((row) => row.id === okJobId);
+    const failRow = telemetry.extraction.recent.find((row) => row.id === failJobId);
+    assert.equal(okRow.hasLogs, true);
+    assert.equal(failRow.hasLogs, true);
+    assert.match(failRow.errorMessage, /No complete recipe found/);
+
+    const anonymous = await request(baseUrl, `/api/telemetry/extraction/${okJobId}/logs`);
+    assert.equal(anonymous.status, 401);
+    const forbidden = await request(baseUrl, `/api/telemetry/extraction/${okJobId}/logs`, {
+      token: user.token,
+    });
+    assert.equal(forbidden.status, 401);
+
+    const logsResponse = await request(baseUrl, `/api/telemetry/extraction/${failJobId}/logs`, {
+      token: admin.token,
+    });
+    assert.equal(logsResponse.status, 200);
+    assert.deepEqual(await logsResponse.json(), {
+      id: failJobId,
+      logs: "[extract] no recipe in caption",
+    });
+
+    const missing = await request(baseUrl, "/api/telemetry/extraction/missing/logs", {
+      token: admin.token,
+    });
+    assert.equal(missing.status, 404);
+  } finally {
+    await stopServer(server);
+    cleanup();
+  }
+});

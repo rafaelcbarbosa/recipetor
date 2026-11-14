@@ -198,6 +198,7 @@ Relevant API routes:
 | `POST` | `/api/events/recipe-view` | Usage event: recipe detail opened |
 | `GET` | `/api/telemetry` | Admin-only telemetry data |
 | `POST` | `/api/telemetry/clear-queue` | Admin-only: delete completed/failed queue history (recipes kept) |
+| `GET` | `/api/telemetry/extraction/:id/logs` | Admin-only: extractor logs for a job (success or failure) |
 
 ## Queue progress
 
@@ -228,6 +229,13 @@ cuisine counts, extraction timings, and recent accesses.
 The dashboard includes the full list of registered users, and a
 **Clear queue history** button on the Recent extractions card that deletes
 completed and failed jobs only (imported recipes are kept).
+
+Extraction logs are stored on every finished job, successful or failed. The
+extractor service returns the last 200 stderr lines; the app saves them in the
+`logs` column, and the dashboard's **View logs** button fetches
+`GET /api/telemetry/extraction/:id/logs`. Failures also store the error message
+shown at the top of the log modal. Logs are deleted with the job when the queue
+history is cleared.
 
 Usage events (`app_open`, `recipe_view`, `favorite`, `rating`, `import`,
 `manual_entry`) are retained for 90 days and pruned on startup. Signed-out

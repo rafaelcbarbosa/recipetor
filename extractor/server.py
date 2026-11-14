@@ -159,6 +159,7 @@ def _extract_command(url: str, compute_nutrition: bool) -> list[str]:
 
 
 def _run_job(job_id: str, url: str, compute_nutrition: bool) -> None:
+    stderr_lines: list[str] = []
     JOB_SEMAPHORE.acquire()
     try:
         _set_job(job_id, status="processing", stage="queued", progress=5, label="Starting recipe extraction")
@@ -177,7 +178,6 @@ def _run_job(job_id: str, url: str, compute_nutrition: bool) -> None:
             start_new_session=True,
         )
 
-        stderr_lines: list[str] = []
         thumbnail_path: str | None = None
 
         def read_stderr() -> None:
@@ -226,6 +226,7 @@ def _run_job(job_id: str, url: str, compute_nutrition: bool) -> None:
                 error="The recipe extractor timed out.",
                 error_code="TIMEOUT",
                 thumbnail_id=_thumbnail_id(thumbnail_path, url),
+                logs="\n".join(stderr_lines),
             )
             return
 
@@ -253,6 +254,7 @@ def _run_job(job_id: str, url: str, compute_nutrition: bool) -> None:
                 error=tail,
                 error_code="INVALID_RESPONSE",
                 thumbnail_id=_thumbnail_id(thumbnail_path, url),
+                logs="\n".join(stderr_lines),
             )
             return
 
@@ -266,6 +268,7 @@ def _run_job(job_id: str, url: str, compute_nutrition: bool) -> None:
                 error=str(payload.get("message") or "The recipe extractor failed.")[:500],
                 error_code=str(payload.get("error") or "EXTRACTION_FAILED"),
                 thumbnail_id=_thumbnail_id(thumbnail_path, url),
+                logs="\n".join(stderr_lines),
             )
             return
 
@@ -279,6 +282,7 @@ def _run_job(job_id: str, url: str, compute_nutrition: bool) -> None:
             label=None,
             recipe=payload,
             thumbnail_id=thumb_id,
+            logs="\n".join(stderr_lines),
         )
     except Exception as exc:  # noqa: BLE001
         _set_job(
@@ -289,6 +293,7 @@ def _run_job(job_id: str, url: str, compute_nutrition: bool) -> None:
             label=None,
             error=str(exc)[:500],
             error_code="EXTRACTION_FAILED",
+            logs="\n".join(stderr_lines),
         )
     finally:
         JOB_SEMAPHORE.release()
@@ -377,6 +382,7 @@ async def get_job(job_id: str, _: None = Depends(require_token)) -> dict:
         "error": snapshot["error"],
         "error_code": snapshot["error_code"],
         "thumbnail_id": snapshot["thumbnail_id"],
+        "logs": snapshot.get("logs") if snapshot["status"] in {"done", "error"} else None,
     }
 
 

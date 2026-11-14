@@ -64,6 +64,15 @@
       .muted { color: var(--muted); }
       .empty { color: var(--muted); font-size: 14px; padding: 8px 0; }
       #logout { border: 0; border-radius: 22px; background: var(--surface); padding: 10px 16px; font-weight: 600; box-shadow: 0 1px 2px rgba(41,37,31,.08); }
+      .log-btn { border: 0; background: none; color: var(--tomato-action); font-size: 13px; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; min-height: 44px; padding: 0 4px; cursor: pointer; }
+      .modal { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(41, 37, 31, 0.4); }
+      .modal[hidden] { display: none; }
+      .modal-card { width: min(900px, 100%); max-height: 82vh; display: flex; flex-direction: column; padding: 20px; border-radius: 20px; background: var(--surface); box-shadow: 0 18px 60px rgba(41, 37, 31, 0.24); }
+      .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      .modal-head h2 { margin: 0; }
+      .modal-close { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; flex: none; border: 0; border-radius: 22px; background: var(--canvas); font-size: 22px; }
+      .modal-error { margin: 8px 0 0; color: var(--tomato-action); font-size: 14px; }
+      .log-pre { flex: 1; min-height: 120px; overflow: auto; margin: 12px 0 0; padding: 14px; border-radius: 16px; background: var(--canvas); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
       @media (max-width: 560px) {
         .cols, .split { grid-template-columns: 1fr; }
         .bar-row { grid-template-columns: 100px 1fr 38px; }
@@ -140,6 +149,17 @@
           <div id="recent-extractions"></div>
         </div>
       </section>
+
+      <div id="log-modal" class="modal" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="log-title">
+          <div class="modal-head">
+            <h2 id="log-title">Extraction logs</h2>
+            <button id="log-close" class="modal-close" aria-label="Close">×</button>
+          </div>
+          <p id="log-error" class="modal-error"></p>
+          <pre id="log-content" class="log-pre"></pre>
+        </div>
+      </div>
     </main>
 
     <script>
@@ -279,12 +299,46 @@
         );
 
         $("recent-extractions").innerHTML = table(
-          [["Link"], ["Status"], ["Duration", "right"], ["Finished", "right"]],
+          [["Link"], ["Status"], ["Duration", "right"], ["Finished", "right"], ["Logs", "right"]],
           data.extraction.recent,
-          (row) => `<tr><td>${escapeHtml(row.url)}</td><td><span class="pill">${escapeHtml(row.status)}</span></td><td class="right">${escapeHtml(formatMs(row.durationMs))}</td><td class="right muted">${escapeHtml(formatDate(row.updatedAt))}</td></tr>`,
+          (row) => `<tr><td>${escapeHtml(row.url)}</td><td><span class="pill">${escapeHtml(row.status)}</span></td><td class="right">${escapeHtml(formatMs(row.durationMs))}</td><td class="right muted">${escapeHtml(formatDate(row.updatedAt))}</td><td class="right">${row.hasLogs ? `<button class="log-btn" data-job="${escapeHtml(row.id)}" data-error="${escapeHtml(row.errorMessage || "")}">View logs</button>` : "—"}</td></tr>`,
           "No extraction jobs yet.",
         );
+        document.querySelectorAll(".log-btn").forEach((button) => {
+          button.addEventListener("click", () => openLogs(button.dataset.job, button.dataset.error));
+        });
       }
+
+      async function openLogs(jobId, errorMessage) {
+        const token = localStorage.getItem(TOKEN_KEY);
+        try {
+          const response = await fetch(`/api/telemetry/extraction/${encodeURIComponent(jobId)}/logs`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!response.ok) {
+            alert("Could not load the extraction logs.");
+            return;
+          }
+          const body = await response.json();
+          $("log-error").textContent = errorMessage || "";
+          $("log-content").textContent = body.logs || "No log lines were recorded.";
+          $("log-modal").hidden = false;
+        } catch {
+          alert("Could not reach the server.");
+        }
+      }
+
+      function closeLogs() {
+        $("log-modal").hidden = true;
+      }
+
+      $("log-close").addEventListener("click", closeLogs);
+      $("log-modal").addEventListener("click", (event) => {
+        if (event.target === event.currentTarget) closeLogs();
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") closeLogs();
+      });
 
       async function load() {
         const token = localStorage.getItem(TOKEN_KEY);

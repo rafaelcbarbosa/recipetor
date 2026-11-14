@@ -166,6 +166,9 @@ export function createHttpExtractor({
 
         const imageUrl = await storeThumbnail(state.thumbnail_id);
         if (imageUrl) recipe.imageUrl = imageUrl;
+        if (typeof state.logs === "string" && state.logs.length > 0) {
+          recipe.extractorLogs = state.logs;
+        }
         return recipe;
       }
 
@@ -173,6 +176,9 @@ export function createHttpExtractor({
         const error = friendlyError(state);
         const thumbnailUrl = await storeThumbnail(state.thumbnail_id);
         if (thumbnailUrl) error.thumbnailUrl = thumbnailUrl;
+        if (typeof state.logs === "string" && state.logs.length > 0) {
+          error.logs = state.logs;
+        }
         throw error;
       }
     }
