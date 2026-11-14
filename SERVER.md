@@ -74,7 +74,7 @@ RECIPE_API_KEY=<opencode-go key> \
 RECIPE_WHISPER_MODEL=medium \
 RECIPE_LANGUAGE=auto \
 RECIPE_COMPUTE_NUTRITION=1 \
-RECIPE_IG_COOKIES=$HOME/.config/instagram-cookies.txt \
+RECIPE_IG_COOKIES=$HOME/.config/recipetor-secrets/instagram-cookies.txt \
 .venv/bin/uvicorn server:app --host 127.0.0.1 --port 8099 --workers 1
 ```
 

@@ -270,11 +270,36 @@ def instagram_cookies() -> Path | None:
     return path
 
 
+_COOKIE_COPY: Path | None = None
+_COOKIE_TMP: tempfile.TemporaryDirectory | None = None
+
+
+def _cookie_copy() -> Path | None:
+    """Private per-process copy so downloaders cannot rewrite the master file.
+
+    yt-dlp writes its updated cookie jar back to ``--cookies``, which changes the
+    file's permissions (often to 0644) and can corrupt a session that is shared
+    with other jobs. Downloaders get a throwaway copy instead.
+    """
+    global _COOKIE_COPY, _COOKIE_TMP
+    if _COOKIE_COPY is not None and _COOKIE_COPY.is_file():
+        return _COOKIE_COPY
+    source = instagram_cookies()
+    if source is None:
+        return None
+    _COOKIE_TMP = tempfile.TemporaryDirectory(prefix="recipetor-cookies-")
+    target = Path(_COOKIE_TMP.name) / "cookies.txt"
+    shutil.copyfile(source, target)
+    target.chmod(0o600)
+    _COOKIE_COPY = target
+    return target
+
+
 def _cookies_for(url: str) -> Path | None:
     """Only hand the Instagram session to Instagram requests."""
     if "instagram.com" not in url:
         return None
-    return instagram_cookies()
+    return _cookie_copy()
 
 
 def fetch_metadata(url: str) -> dict:

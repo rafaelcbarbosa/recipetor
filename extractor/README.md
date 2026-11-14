@@ -45,7 +45,7 @@ Extractor-only environment variables (passed through by both modes):
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `RECIPE_IG_COOKIES` | unset | Netscape `cookies.txt` from a logged-in Instagram browser. Required for photo posts/carousels. |
+| `RECIPE_IG_COOKIES` | unset | Netscape `cookies.txt` from a logged-in Instagram browser. Required for photo posts/carousels. Keep it in a `0700` directory with mode `0600`; the extractor uses a private copy so downloaders cannot rewrite it. |
 | `RECIPE_VISION` | `1` | Send post images to the vision model (`0` disables). |
 | `RECIPE_VISION_MODEL` | `gemini-4-argon` | Multimodal model used only when images are attached. Falls back to the text model without images if the vision request fails. |
 
@@ -59,7 +59,7 @@ RECIPE_MEDIA_DIR=$HOME/recipe-extractor-media \
 RECIPE_WHISPER_MODEL=medium \
 RECIPE_LANGUAGE=auto \
 RECIPE_COMPUTE_NUTRITION=1 \
-RECIPE_IG_COOKIES=$HOME/.config/instagram-cookies.txt \
+RECIPE_IG_COOKIES=$HOME/.config/recipetor-secrets/instagram-cookies.txt \
 .venv/bin/uvicorn server:app --host 127.0.0.1 --port 8099 --workers 1
 ```
 
