@@ -956,7 +956,7 @@ function App() {
         const checkData = (await check.json().catch(() => ({}))) as { recipe?: Recipe };
         if (check.ok && checkData.recipe) {
           setFailureDialog(null);
-          registerImportedRecipe(checkData.recipe, "This link was already saved. Here's the recipe.", {
+          registerImportedRecipe(checkData.recipe, "This link was already saved. Opened it and added it to your favorites.", {
             openDetail: true,
             switchTab: true,
           });
@@ -1129,8 +1129,10 @@ function App() {
   ) {
     knownRecipes.current.set(recipe.id, recipe);
     setRecipes((current) => [recipe, ...current.filter((item) => item.id !== recipe.id)]);
-    if (user) {
+    if (user || recipe.isFavorite) {
       setFavorites((current) => (current.includes(recipe.id) ? current : [...current, recipe.id]));
+    }
+    if (user) {
       setHistory((current) =>
         current.some((entry) => entry.id === recipe.id)
           ? current
@@ -1196,7 +1198,9 @@ function App() {
         registerImportedRecipe(
           result.recipe,
           result.reason === "source"
-            ? "This link was already saved. Here's the recipe."
+            ? user
+              ? "This link was already saved. Opened it and added it to your favorites."
+              : "This link was already saved. Here's the recipe."
             : result.duplicate
               ? "Same recipe found. The new Instagram link was added to it."
               : "Recipe extracted and saved to your recipe box.",
