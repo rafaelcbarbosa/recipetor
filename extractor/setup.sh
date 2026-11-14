@@ -36,7 +36,10 @@ fi
 echo "Installing Python dependencies..."
 "$DIR/.venv/bin/pip" install --quiet --upgrade pip
 "$DIR/.venv/bin/pip" install --quiet -r "$DIR/requirements.txt"
+if [ -f "$DIR/requirements-server.txt" ]; then
+  "$DIR/.venv/bin/pip" install --quiet -r "$DIR/requirements-server.txt"
+fi
 
 echo
 echo "Done."
-echo "  Test: $DIR/.venv/bin/python $DIR/recipe_extract.py <url> --compute-nutrition"
+echo "  Test: $DIR/extract-recipe <url> --compute-nutrition"

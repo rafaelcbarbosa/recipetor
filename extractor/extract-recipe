@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Convenience wrapper: run the vendored extractor with its venv on PATH.
+set -euo pipefail
+DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ ! -x "$DIR/.venv/bin/python" ]; then
+  echo "Not set up yet. Run: $DIR/setup.sh" >&2
+  exit 1
+fi
+export PATH="$DIR/.venv/bin:$PATH"
+exec "$DIR/.venv/bin/python" "$DIR/recipe_extract.py" "$@"

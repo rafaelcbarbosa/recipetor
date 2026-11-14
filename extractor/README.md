@@ -13,7 +13,7 @@ Setup:
 Manual run:
 
 ```sh
-.venv/bin/python recipe_extract.py '<post-url>' --compute-nutrition --thumbnail-dir ../data/media
+./extract-recipe '<post-url>' --compute-nutrition --thumbnail-dir ../data/media
 ```
 
 The Node server drives this script as a child process and parses its stderr
@@ -34,3 +34,23 @@ Environment variables used by the server when spawning the script:
 | `RECIPE_EXTRACTOR_OCR_LANGS` | `por+eng` | tesseract languages |
 | `RECIPE_EXTRACTOR_COMPUTE_NUTRITION` | `1` | estimate calories/macros |
 | `RECIPE_EXTRACTOR_TIMEOUT_MS` | `900000` | per-job timeout |
+
+## HTTP job service
+
+The optional FastAPI wrapper adds a job API with live progress:
+
+```sh
+RECIPE_API_TOKEN=<token> \
+RECIPE_MEDIA_DIR=$HOME/recipe-extractor-media \
+RECIPE_WHISPER_MODEL=medium \
+RECIPE_LANGUAGE=auto \
+RECIPE_COMPUTE_NUTRITION=1 \
+.venv/bin/uvicorn server:app --host 127.0.0.1 --port 8099 --workers 1
+```
+
+Endpoints: `POST /jobs`, `GET /jobs/{id}`, `GET /thumbnails/{id}.jpg`,
+`GET /healthz`, and the synchronous `POST /extract` compatibility route.
+
+When the app host has less RAM than the extractor host, run this service on the
+stronger machine and expose it to the app through a reverse SSH tunnel (see
+`SERVER.md`).

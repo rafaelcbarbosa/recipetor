@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRecipeStore } from "./recipe-store.js";
+import { createHttpExtractor, isHttpExtractorAvailable, useHttpExtractor } from "./http-extractor.js";
 import { createScriptExtractor, isScriptAvailable } from "./script-extractor.js";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
@@ -246,11 +247,17 @@ function sendFile(filePath, request, response) {
   return true;
 }
 
-const defaultExtractor = {
-  backend: "script",
-  extractRecipe: createScriptExtractor(),
-  extractorAvailable: () => isScriptAvailable(),
-};
+const defaultExtractor = useHttpExtractor()
+  ? {
+      backend: "http",
+      extractRecipe: createHttpExtractor(),
+      extractorAvailable: () => isHttpExtractorAvailable(),
+    }
+  : {
+      backend: "script",
+      extractRecipe: createScriptExtractor(),
+      extractorAvailable: () => isScriptAvailable(),
+    };
 
 const DEFAULT_MEDIA_DIR = resolve(ROOT, "data/media");
 
