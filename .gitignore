@@ -10,4 +10,7 @@ __pycache__/
 .env
 .env.*
 !.env.example
+# Instagram session cookies: never commit
+cookies.txt
+*instagram-cookies*.txt
 .DS_Store
