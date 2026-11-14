@@ -930,7 +930,8 @@ export function createRecipeStore(
     const now = Date.now();
     const activeRows = rows.filter((row) => row.status === "pending" || row.status === "processing");
     const failedRows = rows.filter((row) => {
-      if (row.status !== "failed") return false;
+      // Failed jobs that were resolved by manual entry are already processed.
+      if (row.status !== "failed" || row.recipe_id) return false;
       const updated = Date.parse(row.updated_at);
       return Number.isFinite(updated) && now - updated <= FINISHED_JOB_MAX_AGE_MS;
     });

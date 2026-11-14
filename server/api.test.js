@@ -923,6 +923,7 @@ test("manual entry saves a recipe, attaches the failed link, and favorites watch
     assert.equal(store.getRecipeOwner(body.recipe.id), owner.user.id);
     assert.ok(store.listFavorites(owner.user.id).includes(body.recipe.id));
     assert.ok(store.listFavorites(watcher.user.id).includes(body.recipe.id));
+    assert.ok(!store.listPublicExtractionJobs(owner.user.id).some((item) => item.id === job.id));
 
     const reimport = await request(baseUrl, "/api/recipes/import", {
       method: "POST",

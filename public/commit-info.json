@@ -1,5 +1,5 @@
 {
-  "hash": "05b68a1",
-  "date": "2026-11-14 10:26:47 -0600",
-  "message": "Deduplicate failed queue rows by link"
+  "hash": "50fcc76",
+  "date": "2026-11-14 10:30:08 -0600",
+  "message": "Register sign-in retries as watchers"
 }

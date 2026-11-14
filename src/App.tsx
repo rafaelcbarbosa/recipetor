@@ -699,7 +699,7 @@ function App() {
   );
   const ownJob = activeJobs.find((job) => job.isMine) ?? null;
   const failedJobs = useMemo(
-    () => queueJobs.filter((job) => job.status === "failed"),
+    () => queueJobs.filter((job) => job.status === "failed" && !job.recipeId),
     [queueJobs],
   );
   const cuisineOptions = useMemo(
@@ -769,23 +769,6 @@ function App() {
     setIngredientSheet(null);
     if (origin === "queue") setShowQueue(true);
     if (origin === "history") setShowHistory(true);
-  }
-
-  async function openRecipeById(id: string, origin: DetailOrigin) {
-    const existing = recipes.find((recipe) => recipe.id === id);
-    if (existing) {
-      openRecipe(existing, origin);
-      return;
-    }
-    try {
-      const response = await apiFetch(`/api/recipes/${id}`);
-      if (!response.ok) throw new Error("Recipe not found.");
-      const data = (await response.json()) as { recipe: Recipe };
-      setRecipes((current) => [data.recipe, ...current.filter((recipe) => recipe.id !== data.recipe.id)]);
-      openRecipe(data.recipe, origin);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Couldn't open that recipe.");
-    }
   }
 
   async function toggleFavorite(recipe: Recipe) {
@@ -1783,44 +1766,23 @@ function App() {
         <section>
           <h2 className="group-head">Couldn’t be extracted</h2>
           <div className="group">
-            {failedJobs.map((job) =>
-              job.recipeId ? (
-                <button
-                  type="button"
-                  className="queue-row"
-                  key={job.id}
-                  onClick={() => void openRecipeById(job.recipeId!, "queue")}
-                >
-                  <Icon name="check-circle" className="queue-ready" />
-                  <span className="queue-row-text">
-                    <span className="queue-row-title">
-                      <span className="queue-url-text">
-                        {recipes.find((recipe) => recipe.id === job.recipeId)?.title ?? job.shortUrl}
-                      </span>
-                      {job.isMine && <span className="you-chip">You</span>}
-                    </span>
-                    <span className="queue-row-sub">Recipe added manually · tap to open</span>
+            {failedJobs.map((job) => (
+              <div className="queue-row" key={job.id}>
+                <Icon name="alert-circle" className="queue-failed" />
+                <span className="queue-row-text">
+                  <span className="queue-row-title">
+                    <span className="queue-url-text">{job.shortUrl}</span>
+                    {job.isMine && <span className="you-chip">You</span>}
                   </span>
-                  <Icon name="chevron-right" className="queue-waiting" />
-                </button>
-              ) : (
-                <div className="queue-row" key={job.id}>
-                  <Icon name="alert-circle" className="queue-failed" />
-                  <span className="queue-row-text">
-                    <span className="queue-row-title">
-                      <span className="queue-url-text">{job.shortUrl}</span>
-                      {job.isMine && <span className="you-chip">You</span>}
-                    </span>
-                    <span className="queue-row-sub">Couldn’t read this post</span>
-                  </span>
-                  {job.canRetry && (
-                    <button type="button" className="retry-btn manual-entry-btn" onClick={() => openManualSheet(job)}>
-                      Enter manually
-                    </button>
-                  )}
-                </div>
-              ),
-            )}
+                  <span className="queue-row-sub">Couldn’t read this post</span>
+                </span>
+                {job.canRetry && (
+                  <button type="button" className="retry-btn manual-entry-btn" onClick={() => openManualSheet(job)}>
+                    Enter manually
+                  </button>
+                )}
+              </div>
+            ))}
           </div>
         </section>
       )}
