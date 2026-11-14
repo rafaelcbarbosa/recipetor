@@ -1,5 +1,5 @@
 {
-  "hash": "60e7194",
-  "date": "2026-11-13 17:20:44 -0600",
-  "message": "Replace bridge extractor with vendored Python pipeline"
+  "hash": "f8f9df9",
+  "date": "2026-11-13 18:40:28 -0600",
+  "message": "Point extractor deployment at the home server"
 }

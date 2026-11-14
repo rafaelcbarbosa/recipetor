@@ -1598,6 +1598,7 @@ function App() {
                       <span className="queue-url-text">
                         {recipes.find((recipe) => recipe.id === job.recipeId)?.title ?? job.shortUrl}
                       </span>
+                      {job.isMine && <span className="you-chip">You</span>}
                     </span>
                     <span className="queue-row-sub">Ready · tap to open</span>
                   </span>
@@ -1609,6 +1610,7 @@ function App() {
                   <span className="queue-row-text">
                     <span className="queue-row-title">
                       <span className="queue-url-text">{job.shortUrl}</span>
+                      {job.isMine && <span className="you-chip">You</span>}
                     </span>
                     <span className="queue-row-sub">Couldn’t read this post</span>
                   </span>

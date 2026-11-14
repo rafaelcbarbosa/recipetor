@@ -438,6 +438,16 @@ export function createRecipeStore(
     CREATE INDEX IF NOT EXISTS extraction_jobs_status_idx ON extraction_jobs(status);
   `);
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS job_watchers (
+      job_id TEXT NOT NULL REFERENCES extraction_jobs(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (job_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS job_watchers_user_id_idx ON job_watchers(user_id);
+  `);
+
   const jobColumns = new Set(
     db.prepare("PRAGMA table_info(extraction_jobs)").all().map((column) => column.name),
   );
@@ -503,6 +513,12 @@ export function createRecipeStore(
   const jobById = db.prepare("SELECT * FROM extraction_jobs WHERE id = ?");
   const jobByUrl = db.prepare("SELECT * FROM extraction_jobs WHERE url = ? ORDER BY created_at DESC LIMIT 1");
   const jobsByUrl = db.prepare("SELECT * FROM extraction_jobs WHERE url = ? ORDER BY created_at DESC");
+  const addJobWatcherStmt = db.prepare(
+    "INSERT OR IGNORE INTO job_watchers (job_id, user_id, created_at) VALUES (?, ?, ?)",
+  );
+  const jobWatcherStmt = db.prepare("SELECT 1 FROM job_watchers WHERE job_id = ? AND user_id = ?");
+  const watchersByJob = db.prepare("SELECT user_id FROM job_watchers WHERE job_id = ? ORDER BY created_at ASC");
+  const watchersByUser = db.prepare("SELECT job_id FROM job_watchers WHERE user_id = ?");
 
   // Favorites prepared statements
   const favoritesByUser = db.prepare("SELECT recipe_id FROM favorites WHERE user_id = ? ORDER BY created_at DESC");
@@ -730,7 +746,23 @@ export function createRecipeStore(
     db.prepare(
       "INSERT INTO extraction_jobs (id, url, status, stage, progress, created_by, created_at, updated_at) VALUES (?, ?, 'pending', 'queued', 0, ?, ?, ?)"
     ).run(id, url, userId ?? null, now, now);
+    if (userId) addJobWatcherStmt.run(id, userId, now);
     return { id, url, status: "pending", stage: "queued", progress: 0, createdAt: now };
+  }
+
+  function addJobWatcher(jobId, userId) {
+    if (!jobId || !userId) return false;
+    const result = addJobWatcherStmt.run(jobId, userId, new Date().toISOString());
+    return result.changes > 0;
+  }
+
+  function isJobWatcher(jobId, userId) {
+    if (!jobId || !userId) return false;
+    return Boolean(jobWatcherStmt.get(jobId, userId));
+  }
+
+  function listJobWatchers(jobId) {
+    return watchersByJob.all(jobId).map((row) => row.user_id);
   }
 
   function getExtractionJob(id) {
@@ -846,7 +878,8 @@ export function createRecipeStore(
     return new Map(rows.map((row, index) => [row.id, index + 1]));
   }
 
-  function toPublicJob(row, position, userId) {
+  function toPublicJob(row, position, userId, watched = false) {
+    const isCreator = Boolean(userId && row.created_by === userId);
     return {
       id: row.id,
       shortUrl: shortenUrl(row.url),
@@ -855,8 +888,8 @@ export function createRecipeStore(
       progress: row.progress,
       stageLabel: row.stage_label ?? null,
       position: position ?? null,
-      isMine: Boolean(userId && row.created_by === userId),
-      canRetry: !row.created_by || row.created_by === userId,
+      isMine: isCreator || watched,
+      canRetry: !row.created_by || row.created_by === userId || watched,
       recipeId: row.recipe_id ?? null,
       error: row.error_message ?? null,
       errorMessage: row.error_message ?? null,
@@ -868,8 +901,11 @@ export function createRecipeStore(
   function listPublicExtractionJobs(userId = null) {
     const rows = db.prepare("SELECT * FROM extraction_jobs ORDER BY created_at ASC").all();
     const positions = activeJobPositions();
+    const watched = userId
+      ? new Set(watchersByUser.all(userId).map((row) => row.job_id))
+      : new Set();
     return rows
-      .map((row) => toPublicJob(row, positions.get(row.id), userId))
+      .map((row) => toPublicJob(row, positions.get(row.id), userId, watched.has(row.id)))
       .sort((left, right) => {
         const leftActive = left.position !== null;
         const rightActive = right.position !== null;
@@ -882,15 +918,24 @@ export function createRecipeStore(
   function getPublicExtractionJob(id, userId = null) {
     const row = jobById.get(id);
     if (!row) return null;
-    return toPublicJob(row, activeJobPositions().get(id), userId);
+    return toPublicJob(
+      row,
+      activeJobPositions().get(id),
+      userId,
+      Boolean(userId && jobWatcherStmt.get(id, userId)),
+    );
   }
 
   function retryExtractionJob(id, userId) {
     const row = jobById.get(id);
     if (!row) return { error: "NOT_FOUND" };
     if (row.status !== "failed") return { error: "NOT_FAILED" };
-    if (row.created_by && row.created_by !== userId) return { error: "FORBIDDEN" };
+    const watched = Boolean(userId && jobWatcherStmt.get(id, userId));
+    if (row.created_by && row.created_by !== userId && !watched) return { error: "FORBIDDEN" };
     const created = createExtractionJob(row.url, userId ?? row.created_by ?? null);
+    for (const watcherId of listJobWatchers(id)) {
+      addJobWatcher(created.id, watcherId);
+    }
     return {
       job: {
         id: created.id,
@@ -1426,6 +1471,9 @@ export function createRecipeStore(
     listPublicExtractionJobs,
     getPublicExtractionJob,
     retryExtractionJob,
+    addJobWatcher,
+    isJobWatcher,
+    listJobWatchers,
     listRecoverableExtractionJobs,
     updateExtractionJob,
     // Favorites

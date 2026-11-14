@@ -371,3 +371,25 @@ test("matches equivalent ingredient names when borrowing nutrition", () => {
     cleanup();
   }
 });
+
+test("tracks job creators and watchers as owners of a queued job", () => {
+  const { store, cleanup } = createTestStore();
+  try {
+    const creator = store.createUser("creator@example.com", "secret1");
+    const watcher = store.createUser("watcher@example.com", "secret1");
+    const stranger = store.createUser("stranger@example.com", "secret1");
+    const job = store.createExtractionJob("https://www.instagram.com/p/WATCH/", creator.id);
+
+    assert.equal(store.isJobWatcher(job.id, creator.id), true);
+    assert.equal(store.addJobWatcher(job.id, watcher.id), true);
+    assert.equal(store.addJobWatcher(job.id, watcher.id), false);
+    assert.deepEqual(store.listJobWatchers(job.id).sort(), [creator.id, watcher.id].sort());
+
+    assert.equal(store.getPublicExtractionJob(job.id, creator.id).isMine, true);
+    assert.equal(store.getPublicExtractionJob(job.id, watcher.id).isMine, true);
+    assert.equal(store.getPublicExtractionJob(job.id, stranger.id).isMine, false);
+    assert.equal(store.getPublicExtractionJob(job.id, watcher.id).canRetry, true);
+  } finally {
+    cleanup();
+  }
+});

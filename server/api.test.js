@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -461,13 +461,14 @@ test("public queue hides urls and creators while reporting positions", async () 
   }
 });
 
-test("failed imports can be retried only by their owner", async () => {
+test("failed imports can be retried by their owner or watchers", async () => {
   const { store, cleanup } = createTestStore();
   const { server, baseUrl } = await startServer(store, { extractRecipe: async () => recipe });
 
   try {
     const owner = await createVerifiedUser(baseUrl, "retry-owner@example.com");
     const other = await createVerifiedUser(baseUrl, "retry-other@example.com");
+    const watcher = await createVerifiedUser(baseUrl, "retry-watcher@example.com");
     const job = store.createExtractionJob("https://www.instagram.com/p/RETRY/", owner.user.id);
     store.updateExtractionJob(job.id, {
       status: "failed",
@@ -475,6 +476,7 @@ test("failed imports can be retried only by their owner", async () => {
       progress: 100,
       errorMessage: "Extraction failed: nope",
     });
+    store.addJobWatcher(job.id, watcher.user.id);
 
     const anonymous = await request(baseUrl, `/api/recipes/import/retry/${job.id}`, { method: "POST" });
     assert.equal(anonymous.status, 401);
@@ -484,6 +486,15 @@ test("failed imports can be retried only by their owner", async () => {
       token: other.token,
     });
     assert.equal(forbidden.status, 403);
+
+    const watcherRetry = await request(baseUrl, `/api/recipes/import/retry/${job.id}`, {
+      method: "POST",
+      token: watcher.token,
+    });
+    assert.equal(watcherRetry.status, 202);
+    const watcherBody = await watcherRetry.json();
+    assert.equal(watcherBody.job.isMine, true);
+    assert.equal(store.isJobWatcher(watcherBody.job.id, owner.user.id), true);
 
     const pendingJob = store.createExtractionJob("https://www.instagram.com/p/PENDING/", owner.user.id);
     const conflict = await request(baseUrl, `/api/recipes/import/retry/${pendingJob.id}`, {
@@ -621,18 +632,28 @@ test("re-importing an existing link favorites it for the new user", async () => 
   try {
     const first = await createVerifiedUser(baseUrl, "first-source@example.com");
     const second = await createVerifiedUser(baseUrl, "second-source@example.com");
-    const saved = store.saveImported("https://www.instagram.com/p/SOURCE/", recipe, first.user.id);
+    const url = "https://www.instagram.com/p/SOURCE/";
+    const saved = store.saveImported(url, recipe, first.user.id);
+    const completedJob = store.createExtractionJob(url, first.user.id);
+    store.updateExtractionJob(completedJob.id, {
+      status: "completed",
+      stage: "completed",
+      progress: 100,
+      recipeId: saved.recipe.id,
+    });
 
     const response = await request(baseUrl, "/api/recipes/import", {
       method: "POST",
       token: second.token,
-      body: { url: "https://www.instagram.com/p/SOURCE/" },
+      body: { url },
     });
     assert.equal(response.status, 200);
     const body = await response.json();
     assert.equal(body.reason, "source");
     assert.equal(body.recipe.id, saved.recipe.id);
     assert.equal(body.recipe.isFavorite, true);
+    assert.equal(store.isJobWatcher(completedJob.id, second.user.id), true);
+    assert.equal(store.getExtractionJobsByUrl(url).length, 1);
 
     const favorites = await (await request(baseUrl, "/api/favorites", { token: second.token })).json();
     assert.ok(favorites.favorites.includes(saved.recipe.id));
@@ -676,7 +697,7 @@ test("users who join an in-progress import get the finished recipe favorited", a
     assert.equal(secondImport.status, 200);
     const secondJob = (await secondImport.json()).job;
     assert.equal(secondJob.id, firstJob.id);
-    assert.equal(secondJob.isMine, false);
+    assert.equal(secondJob.isMine, true);
 
     releaseExtraction();
     const jobs = await waitForJobs(store, 1);
@@ -764,5 +785,25 @@ test("records live extractor progress and stage labels on queued jobs", async ()
     release?.();
     await stopServer(server);
     cleanup();
+  }
+});
+
+test("serves thumbnails from a relative media directory", async () => {
+  const { store, cleanup } = createTestStore();
+  const relativeDir = `.tmp-media-${process.pid}-${Date.now()}`;
+  mkdirSync(relativeDir, { recursive: true });
+  const image = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+  writeFileSync(join(relativeDir, "thumb.jpg"), image);
+  const { server, baseUrl } = await startServer(store, { mediaDir: relativeDir });
+
+  try {
+    const response = await fetch(`${baseUrl}/media/thumb.jpg`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "image/jpeg");
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), image);
+  } finally {
+    await stopServer(server);
+    cleanup();
+    rmSync(relativeDir, { recursive: true, force: true });
   }
 });

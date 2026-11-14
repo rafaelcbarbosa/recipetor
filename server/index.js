@@ -227,8 +227,9 @@ function sendMediaFile(request, response, mediaDirectory) {
   }
   if (!pathname.startsWith("/media/")) return false;
 
-  const filePath = resolve(mediaDirectory, pathname.slice("/media/".length));
-  if (filePath === mediaDirectory || !filePath.startsWith(`${mediaDirectory}${sep}`)) return false;
+  const mediaRoot = resolve(mediaDirectory);
+  const filePath = resolve(mediaRoot, pathname.slice("/media/".length));
+  if (filePath === mediaRoot || !filePath.startsWith(`${mediaRoot}${sep}`)) return false;
   if (!existsSync(filePath)) return false;
   return sendFile(filePath, request, response);
 }
@@ -266,7 +267,7 @@ export function createServer({
   extractRecipe = defaultExtractor.extractRecipe,
   extractorAvailable = defaultExtractor.extractorAvailable,
   extractorBackend = defaultExtractor.backend,
-  mediaDir = process.env.RECIPETOR_MEDIA_DIR || DEFAULT_MEDIA_DIR,
+  mediaDir = resolve(process.env.RECIPETOR_MEDIA_DIR || DEFAULT_MEDIA_DIR),
   now = () => Date.now(),
 } = {}) {
   if (!store) throw new Error("A recipe store is required.");
@@ -274,7 +275,6 @@ export function createServer({
 
   // Serial job queue - processes one job at a time across all users
   const jobQueue = [];
-  const jobInterests = new Map();
   let isProcessing = false;
 
   async function processQueue() {
@@ -305,7 +305,6 @@ export function createServer({
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : "Unknown extraction error";
           console.error(`[queue] Job ${jobId}: Extraction failed:`, errorMsg);
-          jobInterests.delete(jobId);
           store.updateExtractionJob(jobId, {
             status: "failed",
             stage: "failed",
@@ -322,17 +321,12 @@ export function createServer({
         const saved = store.saveImported(url, extracted, userId);
         console.log(`[queue] Job ${jobId}: Recipe saved: ${saved.recipe.id}, duplicate: ${saved.duplicate}`);
 
-        // Users who submitted the same URL while this job was running also get
-        // the finished recipe favorited and added to their history.
-        const interested = jobInterests.get(jobId);
-        if (interested) {
-          for (const interestedUserId of interested) {
-            if (interestedUserId === userId) continue;
-            if (store.addFavorite(interestedUserId, saved.recipe.id)) {
-              store.addToHistory(interestedUserId, saved.recipe.id, "added");
-            }
+        // The creator and every watcher get the finished recipe favorited and
+        // added to their history.
+        for (const watcherId of store.listJobWatchers(jobId)) {
+          if (store.addFavorite(watcherId, saved.recipe.id)) {
+            store.addToHistory(watcherId, saved.recipe.id, "added");
           }
-          jobInterests.delete(jobId);
         }
 
         store.updateExtractionJob(jobId, {
@@ -345,7 +339,6 @@ export function createServer({
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : "Unknown error";
         console.error(`[queue] Job ${jobId}: Failed:`, errorMsg);
-        jobInterests.delete(jobId);
         store.updateExtractionJob(jobId, {
           status: "failed",
           stage: "failed",
@@ -539,8 +532,14 @@ export function createServer({
       // Check if recipe already exists
       const existing = store.getBySource(url, userId, isAdminRequest(request));
       if (existing) {
-        if (userId && store.addFavorite(userId, existing.id)) {
-          store.addToHistory(userId, existing.id, "added");
+        if (userId) {
+          const completedJob = store
+            .getExtractionJobsByUrl(url)
+            .find((job) => job.status === "completed" && job.recipeId === existing.id);
+          if (completedJob) store.addJobWatcher(completedJob.id, userId);
+          if (store.addFavorite(userId, existing.id)) {
+            store.addToHistory(userId, existing.id, "added");
+          }
         }
         const recipe = store.getRecipe(existing.id, userId, isAdminRequest(request));
         return jsonResponse(response, 200, { recipe, duplicate: true, reason: "source" });
@@ -549,11 +548,7 @@ export function createServer({
       // Check for existing job for this URL
       const existingJob = store.getExtractionJobByUrl(url);
       if (existingJob && existingJob.status !== "completed" && existingJob.status !== "failed") {
-        if (userId && existingJob.createdBy !== userId) {
-          const interested = jobInterests.get(existingJob.id) ?? new Set();
-          interested.add(userId);
-          jobInterests.set(existingJob.id, interested);
-        }
+        if (userId) store.addJobWatcher(existingJob.id, userId);
         return jsonResponse(response, 200, {
           job: store.getPublicExtractionJob(existingJob.id, userId),
           message: "Recipe extraction already in progress. Check status endpoint for progress.",
