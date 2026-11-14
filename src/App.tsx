@@ -485,6 +485,17 @@ function App() {
     else localStorage.removeItem("recipetor_token");
   }, [token]);
 
+  const appOpenSent = useRef(false);
+  useEffect(() => {
+    if (appOpenSent.current) return;
+    appOpenSent.current = true;
+    const headers: Record<string, string> = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    void fetch("/api/events/app-open", { method: "POST", headers }).catch(() => {
+      // Usage telemetry is best effort.
+    });
+  }, [token]);
+
   useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(""), 4200);
@@ -759,6 +770,12 @@ function App() {
     setIngredientSheet(null);
     if (origin === "queue") setShowQueue(false);
     if (origin === "history") setShowHistory(false);
+    void apiFetch("/api/events/recipe-view", {
+      method: "POST",
+      body: JSON.stringify({ recipeId: recipe.id }),
+    }).catch(() => {
+      // Usage telemetry is best effort.
+    });
   }
 
   function closeDetail() {

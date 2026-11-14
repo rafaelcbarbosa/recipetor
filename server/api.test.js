@@ -946,3 +946,99 @@ test("manual entry saves a recipe, attaches the failed link, and favorites watch
     cleanup();
   }
 });
+
+test("serves the telemetry page and data only to the admin account", async () => {
+  const { store, cleanup } = createTestStore();
+  const { server, baseUrl } = await startServer(store);
+
+  try {
+    const page = await fetch(`${baseUrl}/telemetry`);
+    assert.equal(page.status, 200);
+    assert.match(await page.text(), /Recipetor telemetry/);
+
+    const anonymous = await request(baseUrl, "/api/telemetry");
+    assert.equal(anonymous.status, 401);
+
+    const regular = await createVerifiedUser(baseUrl, "regular-telemetry@example.com");
+    const forbidden = await request(baseUrl, "/api/telemetry", { token: regular.token });
+    assert.equal(forbidden.status, 401);
+
+    const admin = await createVerifiedUser(baseUrl, "coxinha@gmail.com");
+    const response = await request(baseUrl, "/api/telemetry", { token: admin.token });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.status.ok, true);
+    assert.equal(typeof body.recipes.total, "number");
+    assert.ok(Array.isArray(body.recipes.byCategory));
+    assert.ok(Array.isArray(body.users.top));
+    assert.ok(Array.isArray(body.access.latest));
+    assert.equal(body.eventRetentionDays, 90);
+  } finally {
+    await stopServer(server);
+    cleanup();
+  }
+});
+
+test("records recipe views, app opens, and favorites for telemetry", async () => {
+  const { store, cleanup } = createTestStore();
+  const { server, baseUrl } = await startServer(store);
+
+  try {
+    const saved = store.saveImported("https://www.instagram.com/p/VIEWED/", recipe);
+    const user = await createVerifiedUser(baseUrl, "viewer@example.com");
+
+    const view = await request(baseUrl, "/api/events/recipe-view", {
+      method: "POST",
+      token: user.token,
+      body: { recipeId: saved.recipe.id },
+    });
+    assert.equal(view.status, 200);
+    const appOpen = await request(baseUrl, "/api/events/app-open", { method: "POST", token: user.token });
+    assert.equal(appOpen.status, 200);
+    const favorite = await request(baseUrl, "/api/favorites", {
+      method: "POST",
+      token: user.token,
+      body: { recipeId: saved.recipe.id },
+    });
+    assert.equal(favorite.status, 200);
+
+    const admin = await createVerifiedUser(baseUrl, "coxinha@gmail.com");
+    const body = await (await request(baseUrl, "/api/telemetry", { token: admin.token })).json();
+
+    assert.ok(body.access.latest.some((event) => event.event === "recipe_view" && event.recipe === recipe.title));
+    assert.ok(body.access.latest.some((event) => event.event === "app_open"));
+    assert.ok(body.access.topViewed.some((entry) => entry.title === recipe.title && entry.views === 1));
+    const viewer = body.users.top.find((entry) => entry.email === "viewer@example.com");
+    assert.ok(viewer);
+    assert.ok(viewer.recipeViews >= 1);
+    assert.ok(body.favorites.total >= 1);
+  } finally {
+    await stopServer(server);
+    cleanup();
+  }
+});
+
+test("reports average extraction time from completed jobs", async () => {
+  const { store, cleanup } = createTestStore();
+  const { server, baseUrl } = await startServer(store);
+
+  try {
+    const admin = await createVerifiedUser(baseUrl, "coxinha@gmail.com");
+    const started = new Date(Date.now() - 10_000).toISOString();
+    const job = store.createExtractionJob("https://www.instagram.com/p/TIMED/", admin.user.id);
+    store.updateExtractionJob(job.id, {
+      status: "completed",
+      stage: "completed",
+      progress: 100,
+      startedAt: started,
+    });
+
+    const body = await (await request(baseUrl, "/api/telemetry", { token: admin.token })).json();
+    assert.equal(body.extraction.completed, 1);
+    assert.ok(body.extraction.averageMs >= 9000 && body.extraction.averageMs <= 12000);
+    assert.ok(body.extraction.recent[0].durationMs >= 9000);
+  } finally {
+    await stopServer(server);
+    cleanup();
+  }
+});

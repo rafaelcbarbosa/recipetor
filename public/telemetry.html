@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Recipetor · Telemetry</title>
+    <style>
+      :root {
+        --ink: #29251f;
+        --muted: #6b635a;
+        --canvas: #faf8f4;
+        --surface: #ffffff;
+        --hairline: #ece7df;
+        --tomato: #e56b45;
+        --tomato-action: #b94a2b;
+        --herb: #63816a;
+        --butter: #f5e6bf;
+        --field: rgba(41, 37, 31, 0.07);
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        color: var(--ink);
+        background: var(--canvas);
+        -webkit-font-smoothing: antialiased;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; }
+      button, input { font: inherit; color: inherit; }
+      button { cursor: pointer; }
+      .wrap { max-width: 1120px; margin: 0 auto; padding: 28px 20px 60px; }
+      .top { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+      h1 { margin: 0; font-size: 26px; letter-spacing: -0.02em; }
+      .sub { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+      h2 { margin: 0 0 12px; font-size: 17px; }
+      .card { background: var(--surface); border-radius: 20px; padding: 18px; margin-bottom: 16px; }
+      .login { max-width: 420px; }
+      .login p { color: var(--muted); font-size: 14px; margin: 0 0 14px; }
+      .login label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; font-weight: 600; color: var(--muted); margin-bottom: 12px; }
+      .login input { height: 44px; padding: 0 14px; border: 0; border-radius: 14px; background: var(--field); font-size: 16px; outline: none; }
+      .login button { width: 100%; height: 48px; border: 0; border-radius: 24px; background: var(--tomato-action); color: #fff; font-size: 16px; font-weight: 700; }
+      .error { color: var(--tomato-action); font-size: 14px; min-height: 18px; margin: 10px 0 0; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+      .stat { background: var(--surface); border-radius: 18px; padding: 16px; }
+      .stat .label { color: var(--muted); font-size: 13px; }
+      .stat .value { display: block; margin-top: 6px; font-size: 24px; font-weight: 700; letter-spacing: -0.01em; }
+      .stat .hint { margin-top: 4px; color: var(--muted); font-size: 12px; }
+      .split { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+      .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
+      table { width: 100%; border-collapse: collapse; font-size: 14px; }
+      th { text-align: left; color: var(--muted); font-weight: 600; font-size: 12px; padding: 0 8px 8px 0; }
+      td { padding: 9px 8px 9px 0; border-top: 1px solid var(--hairline); vertical-align: top; }
+      td.right, th.right { text-align: right; }
+      .bar-row { display: grid; grid-template-columns: 130px 1fr 44px; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 14px; }
+      .bar { height: 8px; border-radius: 4px; background: var(--hairline); overflow: hidden; }
+      .bar i { display: block; height: 100%; border-radius: 4px; background: var(--tomato); }
+      .bar-row b { text-align: right; font-weight: 600; }
+      .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; background: var(--butter); font-size: 12px; }
+      .muted { color: var(--muted); }
+      .empty { color: var(--muted); font-size: 14px; padding: 8px 0; }
+      #logout { border: 0; border-radius: 22px; background: var(--surface); padding: 10px 16px; font-weight: 600; box-shadow: 0 1px 2px rgba(41,37,31,.08); }
+      @media (max-width: 560px) {
+        .cols, .split { grid-template-columns: 1fr; }
+        .bar-row { grid-template-columns: 100px 1fr 38px; }
+        table { font-size: 13px; }
+        .hide-sm { display: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="top">
+        <div>
+          <h1>Recipetor telemetry</h1>
+          <p class="sub" id="status-line">Admin only · not part of the main app</p>
+        </div>
+        <button id="logout" hidden>Sign out</button>
+      </header>
+
+      <section id="login" class="card login">
+        <h2>Admin sign in</h2>
+        <p>Use the Recipetor admin account to view usage and app status.</p>
+        <form id="login-form">
+          <label>Email <input id="email" type="email" autocomplete="username" required /></label>
+          <label>Password <input id="password" type="password" autocomplete="current-password" required /></label>
+          <button type="submit">Sign in</button>
+          <p id="login-error" class="error"></p>
+        </form>
+      </section>
+
+      <section id="dashboard" hidden>
+        <div id="status-cards" class="grid"></div>
+        <div class="cols">
+          <div class="card">
+            <h2>Recipes by category</h2>
+            <div id="by-category"></div>
+          </div>
+          <div class="card">
+            <h2>Recipes by cuisine</h2>
+            <div id="by-cuisine"></div>
+          </div>
+        </div>
+        <div class="split">
+          <div class="card">
+            <h2>Top users</h2>
+            <div id="top-users"></div>
+          </div>
+          <div class="card">
+            <h2>Most viewed recipes</h2>
+            <div id="top-recipes"></div>
+          </div>
+        </div>
+        <div class="split">
+          <div class="card">
+            <h2>Latest recipes added</h2>
+            <div id="latest-recipes"></div>
+          </div>
+          <div class="card">
+            <h2>Latest accesses</h2>
+            <div id="latest-access"></div>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Recent extractions</h2>
+          <div id="recent-extractions"></div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const TOKEN_KEY = "recipetor_telemetry_token";
+      const $ = (id) => document.getElementById(id);
+      const escapeHtml = (value) =>
+        String(value ?? "").replace(/[&<>"']/g, (char) => ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[char]);
+
+      const formatBytes = (bytes) => {
+        if (bytes == null) return "—";
+        const units = ["B", "KB", "MB", "GB"];
+        let value = bytes;
+        let unit = 0;
+        while (value >= 1024 && unit < units.length - 1) {
+          value /= 1024;
+          unit += 1;
+        }
+        return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+      };
+      const formatMs = (ms) => (ms == null ? "—" : `${(ms / 1000).toFixed(1)}s`);
+      const formatDate = (iso) => (iso ? new Date(iso).toLocaleString() : "—");
+
+      const table = (headers, rows, renderRow, emptyText) => {
+        if (!rows.length) return `<p class="empty">${escapeHtml(emptyText)}</p>`;
+        return `<table><thead><tr>${headers
+          .map(([label, cls]) => `<th class="${cls || ""}">${escapeHtml(label)}</th>`)
+          .join("")}</tr></thead><tbody>${rows.map(renderRow).join("")}</tbody></table>`;
+      };
+
+      const bars = (rows, total, emptyText) => {
+        if (!rows.length) return `<p class="empty">${escapeHtml(emptyText)}</p>`;
+        const max = Math.max(...rows.map((row) => row.count), 1);
+        return rows
+          .map(
+            (row) => `<div class="bar-row">
+              <span>${escapeHtml(row.label || "Other")}</span>
+              <span class="bar"><i style="width:${Math.round((row.count / max) * 100)}%"></i></span>
+              <b>${row.count}</b>
+            </div>`,
+          )
+          .join("");
+      };
+
+      function showLogin(message = "") {
+        $("login").hidden = false;
+        $("dashboard").hidden = true;
+        $("logout").hidden = true;
+        $("status-line").textContent = "Admin only · not part of the main app";
+        $("login-error").textContent = message;
+      }
+
+      function showDashboard(data) {
+        $("login").hidden = true;
+        $("dashboard").hidden = false;
+        $("logout").hidden = false;
+        $("status-line").textContent = `Updated ${formatDate(data.now)} · version ${data.status.version || "dev"}`;
+        render(data);
+      }
+
+      function render(data) {
+        const stats = [
+          ["Recipes", data.recipes.total, `${data.recipes.latest.length} latest shown`],
+          ["Users", data.users.total, `${data.users.activeLast7Days} active in 7d`],
+          ["Active users", data.users.activeLast30Days, "last 30 days"],
+          ["Favorites", data.favorites.total, "saved by users"],
+          ["Ratings", data.ratings.total, data.ratings.average != null ? `avg ${data.ratings.average}` : "no average"],
+          ["Avg extraction", formatMs(data.extraction.averageMs), `${data.extraction.completed} completed`],
+          ["Queue", data.queue.active, "active jobs"],
+          ["Failures", data.extraction.failed, "all time"],
+          ["Failures 24h", data.queue.waiting24h, "still visible"],
+          ["Database", formatBytes(data.dbSizeBytes), `${data.eventRetentionDays}d event retention`],
+        ];
+        $("status-cards").innerHTML = stats
+          .map(
+            ([label, value, hint]) => `<div class="stat">
+              <span class="label">${escapeHtml(label)}</span>
+              <span class="value">${escapeHtml(value)}</span>
+              <span class="hint">${escapeHtml(hint)}</span>
+            </div>`,
+          )
+          .join("");
+
+        $("by-category").innerHTML = bars(data.recipes.byCategory, data.recipes.total, "No recipes yet.");
+        $("by-cuisine").innerHTML = bars(data.recipes.byCuisine, data.recipes.total, "No cuisine data yet.");
+
+        $("top-users").innerHTML = table(
+          [["User"], ["Events", "right"], ["Views", "right"], ["Last seen", "right"]],
+          data.users.top,
+          (row) => `<tr><td>${escapeHtml(row.email)}</td><td class="right">${row.events}</td><td class="right">${row.recipeViews}</td><td class="right muted">${escapeHtml(formatDate(row.lastSeen))}</td></tr>`,
+          "No user activity yet.",
+        );
+
+        $("top-recipes").innerHTML = table(
+          [["Recipe"], ["Views", "right"]],
+          data.access.topViewed,
+          (row) => `<tr><td>${escapeHtml(row.title)}</td><td class="right">${row.views}</td></tr>`,
+          "No recipe views yet.",
+        );
+
+        $("latest-recipes").innerHTML = table(
+          [["Recipe"], ["Category"], ["Added by"], ["When", "right"]],
+          data.recipes.latest,
+          (row) => `<tr><td>${escapeHtml(row.title)}</td><td><span class="pill">${escapeHtml(row.category)}</span></td><td class="muted">${escapeHtml(row.addedBy || "anonymous")}</td><td class="right muted">${escapeHtml(formatDate(row.createdAt))}</td></tr>`,
+          "No recipes yet.",
+        );
+
+        $("latest-access").innerHTML = table(
+          [["When"], ["Event"], ["User"], ["Recipe"]],
+          data.access.latest,
+          (row) => `<tr><td class="muted">${escapeHtml(formatDate(row.at))}</td><td>${escapeHtml(row.event)}</td><td>${escapeHtml(row.user || "anonymous")}</td><td>${escapeHtml(row.recipe || "—")}</td></tr>`,
+          "No accesses recorded yet.",
+        );
+
+        $("recent-extractions").innerHTML = table(
+          [["Link"], ["Status"], ["Duration", "right"], ["Finished", "right"]],
+          data.extraction.recent,
+          (row) => `<tr><td>${escapeHtml(row.url)}</td><td><span class="pill">${escapeHtml(row.status)}</span></td><td class="right">${escapeHtml(formatMs(row.durationMs))}</td><td class="right muted">${escapeHtml(formatDate(row.updatedAt))}</td></tr>`,
+          "No extraction jobs yet.",
+        );
+      }
+
+      async function load() {
+        const token = localStorage.getItem(TOKEN_KEY);
+        if (!token) return showLogin();
+        try {
+          const response = await fetch("/api/telemetry", {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!response.ok) {
+            localStorage.removeItem(TOKEN_KEY);
+            return showLogin(response.status === 401 ? "Session expired. Sign in again." : "Could not load telemetry.");
+          }
+          showDashboard(await response.json());
+        } catch {
+          showLogin("Could not reach the server.");
+        }
+      }
+
+      $("login-form").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        $("login-error").textContent = "";
+        try {
+          const response = await fetch("/api/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              email: $("email").value.trim(),
+              password: $("password").value,
+            }),
+          });
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok || !body.token) {
+            $("login-error").textContent = body.error || "Sign in failed.";
+            return;
+          }
+          localStorage.setItem(TOKEN_KEY, body.token);
+          $("password").value = "";
+          await load();
+        } catch {
+          $("login-error").textContent = "Could not reach the server.";
+        }
+      });
+
+      $("logout").addEventListener("click", () => {
+        localStorage.removeItem(TOKEN_KEY);
+        location.reload();
+      });
+
+      setInterval(() => {
+        if (!$("dashboard").hidden) void load();
+      }, 30000);
+
+      void load();
+    </script>
+  </body>
+</html>

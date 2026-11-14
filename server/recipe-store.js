@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import nodemailer from "nodemailer";
@@ -464,6 +464,27 @@ export function createRecipeStore(
     db.exec("ALTER TABLE extraction_jobs ADD COLUMN stage_label TEXT");
     console.log("Migration: added stage_label column to extraction_jobs table");
   }
+  if (!jobColumns.has("started_at")) {
+    db.exec("ALTER TABLE extraction_jobs ADD COLUMN started_at TEXT");
+    console.log("Migration: added started_at column to extraction_jobs table");
+  }
+
+  // Anonymous-friendly usage events for the telemetry dashboard.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS app_events (
+      id TEXT PRIMARY KEY,
+      user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      event TEXT NOT NULL,
+      recipe_id TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS app_events_created_idx ON app_events(created_at);
+    CREATE INDEX IF NOT EXISTS app_events_user_idx ON app_events(user_id);
+    CREATE INDEX IF NOT EXISTS app_events_event_idx ON app_events(event);
+  `);
+  const EVENT_RETENTION_DAYS = 90;
+  db.prepare("DELETE FROM app_events WHERE created_at < ?")
+    .run(new Date(Date.now() - EVENT_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString());
 
   // Favorites and history tables
   db.exec(`
@@ -528,6 +549,11 @@ export function createRecipeStore(
   const jobWatcherStmt = db.prepare("SELECT 1 FROM job_watchers WHERE job_id = ? AND user_id = ?");
   const watchersByJob = db.prepare("SELECT user_id FROM job_watchers WHERE job_id = ? ORDER BY created_at ASC");
   const watchersByUser = db.prepare("SELECT job_id FROM job_watchers WHERE user_id = ?");
+
+  // Telemetry prepared statements
+  const insertEventStmt = db.prepare(
+    "INSERT INTO app_events (id, user_id, event, recipe_id, created_at) VALUES (?, ?, ?, ?, ?)",
+  );
 
   // Favorites prepared statements
   const favoritesByUser = db.prepare("SELECT recipe_id FROM favorites WHERE user_id = ? ORDER BY created_at DESC");
@@ -888,6 +914,7 @@ export function createRecipeStore(
     if (updates.stage !== undefined) { fields.push("stage = ?"); params.push(updates.stage); }
     if (updates.progress !== undefined) { fields.push("progress = ?"); params.push(updates.progress); }
     if (updates.stageLabel !== undefined) { fields.push("stage_label = ?"); params.push(updates.stageLabel); }
+    if (updates.startedAt !== undefined) { fields.push("started_at = ?"); params.push(updates.startedAt); }
     if (updates.errorMessage !== undefined) { fields.push("error_message = ?"); params.push(updates.errorMessage); }
     if (updates.recipeId !== undefined) { fields.push("recipe_id = ?"); params.push(updates.recipeId); }
     if (fields.length === 0) return;
@@ -1489,6 +1516,141 @@ export function createRecipeStore(
     }
   }
 
+  function recordEvent(userId, event, recipeId = null) {
+    insertEventStmt.run(randomUUID(), userId ?? null, event, recipeId ?? null, new Date().toISOString());
+  }
+
+  function telemetryData() {
+    const count = (sql, ...params) => db.prepare(sql).get(...params);
+    const iso = (daysAgo) => new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000).toISOString();
+
+    const recipes = {
+      total: count("SELECT COUNT(*) AS n FROM recipes").n,
+      byCategory: db
+        .prepare("SELECT category AS label, COUNT(*) AS count FROM recipes GROUP BY category ORDER BY count DESC")
+        .all(),
+      byCuisine: db
+        .prepare(
+          "SELECT cuisine AS label, COUNT(*) AS count FROM recipes WHERE cuisine != '' GROUP BY cuisine ORDER BY count DESC LIMIT 10",
+        )
+        .all(),
+      latest: db
+        .prepare(
+          `SELECT r.id, r.title, r.category, r.image_url AS imageUrl, r.created_at AS createdAt,
+                  u.email AS addedBy
+           FROM recipes r LEFT JOIN users u ON r.user_id = u.id
+           ORDER BY r.created_at DESC LIMIT ?`,
+        )
+        .all(10),
+    };
+
+    const durationExpr = "(julianday(updated_at) - julianday(started_at)) * 86400000.0";
+    const durations = db
+      .prepare(
+        `SELECT ${durationExpr} AS ms FROM extraction_jobs
+         WHERE status = 'completed' AND started_at IS NOT NULL`,
+      )
+      .all()
+      .map((row) => row.ms)
+      .filter((ms) => Number.isFinite(ms) && ms >= 0);
+    const averageMs = durations.length
+      ? Math.round(durations.reduce((total, ms) => total + ms, 0) / durations.length)
+      : null;
+
+    const extraction = {
+      completed: count("SELECT COUNT(*) AS n FROM extraction_jobs WHERE status = 'completed'").n,
+      failed: count("SELECT COUNT(*) AS n FROM extraction_jobs WHERE status = 'failed'").n,
+      averageMs,
+      minMs: durations.length ? Math.min(...durations) : null,
+      maxMs: durations.length ? Math.max(...durations) : null,
+      recent: db
+        .prepare(
+          `SELECT url, status, started_at AS startedAt, updated_at AS updatedAt,
+                  CASE WHEN started_at IS NOT NULL
+                    THEN CAST(${durationExpr} AS INTEGER) END AS durationMs
+           FROM extraction_jobs
+           WHERE status IN ('completed', 'failed')
+           ORDER BY updated_at DESC LIMIT 10`,
+        )
+        .all(),
+    };
+
+    const active7 = count(
+      "SELECT COUNT(DISTINCT user_id) AS n FROM app_events WHERE user_id IS NOT NULL AND created_at >= ?",
+      iso(7),
+    ).n;
+    const active30 = count(
+      "SELECT COUNT(DISTINCT user_id) AS n FROM app_events WHERE user_id IS NOT NULL AND created_at >= ?",
+      iso(30),
+    ).n;
+
+    const users = {
+      total: count("SELECT COUNT(*) AS n FROM users").n,
+      activeLast7Days: active7,
+      activeLast30Days: active30,
+      top: db
+        .prepare(
+          `SELECT u.email, COUNT(*) AS events,
+                  SUM(CASE WHEN e.event = 'recipe_view' THEN 1 ELSE 0 END) AS recipeViews,
+                  MAX(e.created_at) AS lastSeen
+           FROM app_events e JOIN users u ON e.user_id = u.id
+           GROUP BY e.user_id ORDER BY events DESC LIMIT 10`,
+        )
+        .all(),
+    };
+
+    const access = {
+      latest: db
+        .prepare(
+          `SELECT e.event, e.created_at AS at, u.email AS user, r.title AS recipe
+           FROM app_events e
+           LEFT JOIN users u ON e.user_id = u.id
+           LEFT JOIN recipes r ON e.recipe_id = r.id
+           ORDER BY e.created_at DESC LIMIT 20`,
+        )
+        .all(),
+      topViewed: db
+        .prepare(
+          `SELECT r.title, COUNT(*) AS views
+           FROM app_events e JOIN recipes r ON e.recipe_id = r.id
+           WHERE e.event = 'recipe_view'
+           GROUP BY e.recipe_id ORDER BY views DESC LIMIT 10`,
+        )
+        .all(),
+    };
+
+    const ratings = count("SELECT COUNT(*) AS n, AVG(rating) AS average FROM recipe_ratings");
+
+    return {
+      now: new Date().toISOString(),
+      eventRetentionDays: EVENT_RETENTION_DAYS,
+      dbSizeBytes: (() => {
+        if (path === ":memory:") return null;
+        try {
+          return statSync(path).size;
+        } catch {
+          return null;
+        }
+      })(),
+      recipes,
+      extraction,
+      users,
+      access,
+      favorites: { total: count("SELECT COUNT(*) AS n FROM favorites").n },
+      ratings: {
+        total: ratings.n ?? 0,
+        average: ratings.average != null ? Math.round(ratings.average * 10) / 10 : null,
+      },
+      queue: {
+        active: count("SELECT COUNT(*) AS n FROM extraction_jobs WHERE status IN ('pending', 'processing')").n,
+        waiting24h: count(
+          "SELECT COUNT(*) AS n FROM extraction_jobs WHERE status = 'failed' AND updated_at >= ?",
+          iso(1),
+        ).n,
+      },
+    };
+  }
+
   backfillIngredientNutrition();
 
   return {
@@ -1526,6 +1688,8 @@ export function createRecipeStore(
     listJobWatchers,
     listRecoverableExtractionJobs,
     updateExtractionJob,
+    recordEvent,
+    telemetryData,
     // Favorites
     listFavorites,
     isFavorite,

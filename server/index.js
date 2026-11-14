@@ -235,10 +235,21 @@ function sendMediaFile(request, response, mediaDirectory) {
   return sendFile(filePath, request, response);
 }
 
+function appVersion() {
+  try {
+    return JSON.parse(readFileSync(resolve(ROOT, "dist/commit-info.json"), "utf8")).hash ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function sendFile(filePath, request, response) {
   const content = readFileSync(filePath);
   response.writeHead(200, {
-    "Cache-Control": filePath.endsWith(`${sep}index.html`) || filePath === resolve(ROOT, "dist/index.html")
+    "Cache-Control":
+      filePath.endsWith(`${sep}index.html`) ||
+      filePath === resolve(ROOT, "dist/index.html") ||
+      filePath.endsWith("telemetry.html")
       ? "no-cache"
       : "public, max-age=31536000, immutable",
     "Content-Length": content.length,
@@ -285,7 +296,13 @@ export function createServer({
     while (jobQueue.length > 0) {
       const { jobId, url, userId } = jobQueue.shift();
       try {
-        store.updateExtractionJob(jobId, { status: "processing", stage: "queued", progress: 5, stageLabel: null });
+        store.updateExtractionJob(jobId, {
+          status: "processing",
+          stage: "queued",
+          progress: 5,
+          stageLabel: null,
+          startedAt: new Date().toISOString(),
+        });
         console.log(`[queue] Job ${jobId}: Starting extraction for ${url}`);
 
         store.updateExtractionJob(jobId, { status: "processing", stage: "fetching", progress: 10, stageLabel: "Fetching post" });
@@ -320,6 +337,7 @@ export function createServer({
         console.log(`[queue] Job ${jobId}: Extraction finished, saving recipe`);
 
         const saved = store.saveImported(url, extracted, userId);
+        store.recordEvent(userId, "import", saved.recipe.id);
         console.log(`[queue] Job ${jobId}: Recipe saved: ${saved.recipe.id}, duplicate: ${saved.duplicate}`);
 
         // The creator and every watcher get the finished recipe favorited and
@@ -519,7 +537,8 @@ export function createServer({
     const singleRecipeMatch = pathname.match(/^\/api\/recipes\/([^/]+)$/);
     if (singleRecipeMatch && request.method === "GET") {
       const recipeId = singleRecipeMatch[1];
-      const recipe = store.getRecipe(recipeId, extractUserId(request), isAdminRequest(request));
+      const userId = extractUserId(request);
+      const recipe = store.getRecipe(recipeId, userId, isAdminRequest(request));
       if (!recipe) return jsonResponse(response, 404, { error: "Recipe not found." });
       return jsonResponse(response, 200, { recipe });
     }
@@ -633,6 +652,7 @@ export function createServer({
       }
 
       const saved = store.saveImported(job.url, recipe, userId, isAdminRequest(request));
+      store.recordEvent(userId, "manual_entry", saved.recipe.id);
       store.linkExtractionJobToRecipe(jobId, saved.recipe.id);
       for (const watcherId of store.listJobWatchers(jobId)) {
         if (store.addFavorite(watcherId, saved.recipe.id)) {
@@ -735,6 +755,7 @@ export function createServer({
       if (!recipeId) return jsonResponse(response, 400, { error: "recipeId is required." });
       if (!store.getRecipe(recipeId)) return jsonResponse(response, 404, { error: "Recipe not found." });
       const added = store.addFavorite(userId, recipeId);
+      if (added) store.recordEvent(userId, "favorite", recipeId);
       return jsonResponse(response, 200, { added, recipeId });
     }
 
@@ -765,7 +786,9 @@ export function createServer({
       if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
         return jsonResponse(response, 400, { error: "rating must be an integer from 1 to 5." });
       }
-      return jsonResponse(response, 200, store.setRating(userId, recipeId, rating));
+      const ratingResult = store.setRating(userId, recipeId, rating);
+      store.recordEvent(userId, "rating", recipeId);
+      return jsonResponse(response, 200, ratingResult);
     }
 
     // History endpoints
@@ -789,6 +812,42 @@ export function createServer({
       return jsonResponse(response, 200, { ok: true, recipeId, action });
     }
 
+    // Telemetry dashboard (admin only, not linked from the main app).
+    if (pathname === "/telemetry" && (request.method === "GET" || request.method === "HEAD")) {
+      const file = [resolve(ROOT, "dist/telemetry.html"), resolve(ROOT, "public/telemetry.html")].find(existsSync);
+      if (!file) return jsonResponse(response, 404, { error: "Not found." });
+      return sendFile(file, request, response);
+    }
+    if (pathname === "/api/telemetry" && request.method === "GET") {
+      if (!isAdminRequest(request)) {
+        return jsonResponse(response, 401, { error: "Admin authentication required." });
+      }
+      const data = store.telemetryData();
+      return jsonResponse(response, 200, {
+        ...data,
+        status: {
+          ok: true,
+          version: appVersion(),
+          uptimeSeconds: Math.round(process.uptime()),
+          extractorBackend,
+          extractorAvailable: await extractorAvailable(),
+        },
+      });
+    }
+    if (pathname === "/api/events/app-open" && request.method === "POST") {
+      checkSameOrigin(request);
+      store.recordEvent(extractUserId(request), "app_open");
+      return jsonResponse(response, 200, { ok: true });
+    }
+    if (pathname === "/api/events/recipe-view" && request.method === "POST") {
+      checkSameOrigin(request);
+      const body = await readJson(request);
+      const recipeId = body?.recipeId?.toString();
+      if (!recipeId) return jsonResponse(response, 400, { error: "recipeId is required." });
+      if (!store.getRecipe(recipeId)) return jsonResponse(response, 404, { error: "Recipe not found." });
+      store.recordEvent(extractUserId(request), "recipe_view", recipeId);
+      return jsonResponse(response, 200, { ok: true });
+    }
     if (pathname.startsWith("/api/")) {
       return jsonResponse(response, 404, { error: "API endpoint not found." });
     }

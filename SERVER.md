@@ -192,6 +192,18 @@ The queue UI shows the current step name and percentage while the four stage
 bars track fetching, extracting, and saving. The remote job API exposes the same
 `stage`, `progress`, and `label` fields.
 
+## Telemetry (admin only)
+
+`GET /telemetry` serves a standalone dashboard that is not linked from the main
+app. Sign in with the Recipetor admin account (the same email/password as the
+main app). Data comes from the admin-only `GET /api/telemetry` endpoint and
+includes app status, user activity, recipe views, latest recipes, category and
+cuisine counts, extraction timings, and recent accesses.
+
+Usage events (`app_open`, `recipe_view`, `favorite`, `rating`, `import`,
+`manual_entry`) are retained for 90 days and pruned on startup. Signed-out
+activity is stored anonymously.
+
 ## Testing
 
 ```sh
