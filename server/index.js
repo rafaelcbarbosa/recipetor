@@ -827,10 +827,17 @@ if (invokedPath === fileURLToPath(import.meta.url)) {
   });
 
   function shutdown() {
-    server.close(() => {
-      store.close();
+    const finish = () => {
+      try {
+        store.close();
+      } catch {
+        // The store may already be closed.
+      }
       process.exit(0);
-    });
+    };
+    server.close(finish);
+    server.closeAllConnections?.();
+    setTimeout(finish, 5000).unref();
   }
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
