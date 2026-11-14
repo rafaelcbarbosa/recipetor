@@ -429,11 +429,17 @@ test("hides old failures and caps completed jobs in the public queue", () => {
       });
     }
 
+    const processedUrl = "https://www.instagram.com/p/PROCESSED/";
+    store.saveImported(processedUrl, recipe);
+    const processedFail = store.createExtractionJob(processedUrl, user.id);
+    store.updateExtractionJob(processedFail.id, { status: "failed", stage: "failed", progress: 100 });
+
     const jobs = store.listPublicExtractionJobs(user.id);
     const ids = jobs.map((job) => job.id);
     assert.ok(ids.includes(active.id));
     assert.ok(ids.includes(recentFail.id));
     assert.ok(!ids.includes(oldFail.id));
+    assert.ok(!ids.includes(processedFail.id));
     assert.equal(jobs.filter((job) => job.status === "failed").length, 1);
     assert.equal(jobs.filter((job) => job.status === "completed").length, 10);
   } finally {

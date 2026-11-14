@@ -928,10 +928,12 @@ export function createRecipeStore(
     const rows = db.prepare("SELECT * FROM extraction_jobs ORDER BY created_at ASC").all();
     const positions = activeJobPositions();
     const now = Date.now();
+    const sourceUrls = new Set(db.prepare("SELECT url FROM recipe_sources").all().map((row) => row.url));
     const activeRows = rows.filter((row) => row.status === "pending" || row.status === "processing");
     const failedRows = rows.filter((row) => {
-      // Failed jobs that were resolved by manual entry are already processed.
-      if (row.status !== "failed" || row.recipe_id) return false;
+      // Failed jobs that already have a recipe (manual entry or a successful
+      // retry) are processed and should not remain in the queue.
+      if (row.status !== "failed" || row.recipe_id || sourceUrls.has(row.url)) return false;
       const updated = Date.parse(row.updated_at);
       return Number.isFinite(updated) && now - updated <= FINISHED_JOB_MAX_AGE_MS;
     });

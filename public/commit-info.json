@@ -1,5 +1,5 @@
 {
-  "hash": "50fcc76",
-  "date": "2026-11-14 10:30:08 -0600",
-  "message": "Register sign-in retries as watchers"
+  "hash": "c59c1f2",
+  "date": "2026-11-14 10:33:14 -0600",
+  "message": "Hide manually processed failures from the queue"
 }
