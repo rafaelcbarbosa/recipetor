@@ -1517,7 +1517,11 @@ export function createRecipeStore(
   }
 
   function recordEvent(userId, event, recipeId = null) {
-    insertEventStmt.run(randomUUID(), userId ?? null, event, recipeId ?? null, new Date().toISOString());
+    try {
+      insertEventStmt.run(randomUUID(), userId ?? null, event, recipeId ?? null, new Date().toISOString());
+    } catch {
+      // Usage telemetry must never break an app request.
+    }
   }
 
   function telemetryData() {
