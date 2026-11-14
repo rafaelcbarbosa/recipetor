@@ -174,6 +174,29 @@ On the extractor host, keep the extractor service and the reverse tunnel running
 under systemd. The extractor's `extractor/.venv` and media directory are also
 local to that host.
 
+## Queue & import behavior
+
+- Importing a link that already has a recipe returns the recipe and creates no job; signed-in users get it favorited and added to history.
+- Importing a link that is already queued joins the existing job as a watcher and creates no duplicate job. Watchers are treated like the creator in the queue and receive the recipe on completion.
+- Importing a link that failed in the last 24h returns `alreadyFailed`; the app asks the user to retry or cancel.
+- Failures stay in the queue for 24h, one row per link, then disappear. A failure row disappears immediately once its link has a recipe.
+- Completed jobs are never shown in the queue. The Library updates automatically and a toast announces the new recipe.
+- Failed rows offer manual entry to the creator/watchers. A manual recipe attaches the failed link as a source and is favorited/historied for the entrant and all watchers.
+- Deletion: the admin can delete any recipe; the original loader can delete their own.
+
+Relevant API routes:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/recipes/import` | Queue a link or return an existing recipe/failure |
+| `GET` | `/api/recipes/import/queue` | Active jobs plus failures from the last 24h |
+| `GET` | `/api/recipes/import/status/:id` | Job status and live progress |
+| `POST` | `/api/recipes/import/retry/:id` | Retry a failed job (creator/watchers) |
+| `POST` | `/api/recipes/manual` | Save a manual recipe for a failed job |
+| `POST` | `/api/events/app-open` | Usage event: app opened |
+| `POST` | `/api/events/recipe-view` | Usage event: recipe detail opened |
+| `GET` | `/api/telemetry` | Admin-only telemetry data |
+
 ## Queue progress
 
 Each queued job records its stage and a live `stageLabel` from the extractor:
