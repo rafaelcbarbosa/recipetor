@@ -1,0 +1,16 @@
+[Unit]
+Description=Recipetor recipe extractor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=coxinha
+Group=coxinha
+WorkingDirectory=/mnt/projects/recipetor/extractor
+EnvironmentFile=/home/coxinha/.config/recipetor-extractor.env
+ExecStart=/mnt/projects/recipetor/extractor/.venv/bin/uvicorn server:app --host 127.0.0.1 --port 8099 --workers 1
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

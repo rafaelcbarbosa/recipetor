@@ -1,5 +1,5 @@
 {
-  "hash": "4dd568f",
-  "date": "2026-11-13 09:21:35 -0600",
-  "message": "Add background backlog access and live completions"
+  "hash": "60e7194",
+  "date": "2026-11-13 17:20:44 -0600",
+  "message": "Replace bridge extractor with vendored Python pipeline"
 }
