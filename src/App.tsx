@@ -94,6 +94,11 @@ const MEAL_OPTIONS = ["Breakfast", "Lunch", "Dinner", "Dessert", "Snack"];
 const MANUAL_CATEGORIES = ["Breakfast", "Lunch", "Dinner", "Dessert", "Snack", "Other"];
 const DIET_OPTIONS = ["Vegan", "Vegetarian", "Gluten-free", "Low-carb", "Dairy-free", "Pescatarian", "High-protein"];
 const STAGE_LABELS = ["Queued", "Fetching", "Extracting", "Saving"];
+const REQUEST_TIMEOUT_MS = 20_000;
+const QUEUE_POLL_MS = 2000;
+const QUEUE_POLL_MAX_MS = 15_000;
+const OFFLINE_MESSAGE =
+  "Looks like the app is down… and Coxinha is definitely working on it. Go get a coffee and come back in a few.";
 const numberFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
 const kcalFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
 
@@ -407,6 +412,7 @@ function App() {
   const [resetEmail, setResetEmail] = useState("");
   const [notice, setNotice] = useState("");
   const [serverState, setServerState] = useState<ServerState>("checking");
+  const [isOffline, setIsOffline] = useState(() => !navigator.onLine);
 
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -469,7 +475,18 @@ function App() {
         ...((options.headers as Record<string, string> | undefined) ?? {}),
       };
       if (token) headers.Authorization = `Bearer ${token}`;
-      return fetch(path, { ...options, headers });
+      try {
+        const response = await fetch(path, {
+          ...options,
+          headers,
+          signal: options.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        });
+        setIsOffline(response.status >= 500);
+        return response;
+      } catch (error) {
+        setIsOffline(true);
+        throw error;
+      }
     },
     [token],
   );
@@ -478,11 +495,13 @@ function App() {
     if (queueLoadedAt.current == null) queueLoadedAt.current = Date.now();
     try {
       const response = await apiFetch("/api/recipes/import/queue");
-      if (!response.ok) return;
+      if (!response.ok) return false;
       const data = (await response.json()) as { jobs?: QueueJob[] };
       setQueueJobs(data.jobs ?? []);
+      return true;
     } catch {
-      // Queue refresh is best effort.
+      // Queue refresh is best effort; the offline banner handles the UI.
+      return false;
     }
   }, [apiFetch]);
 
@@ -495,12 +514,10 @@ function App() {
   useEffect(() => {
     if (appOpenSent.current) return;
     appOpenSent.current = true;
-    const headers: Record<string, string> = {};
-    if (token) headers.Authorization = `Bearer ${token}`;
-    void fetch("/api/events/app-open", { method: "POST", headers }).catch(() => {
+    void apiFetch("/api/events/app-open", { method: "POST" }).catch(() => {
       // Usage telemetry is best effort.
     });
-  }, [token]);
+  }, [apiFetch]);
 
   useEffect(() => {
     if (!notice) return;
@@ -508,41 +525,44 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
+  const checkServer = useCallback(async () => {
+    try {
+      const response = await apiFetch("/api/health");
+      if (!response.ok) throw new Error("Health check failed.");
+      const health = (await response.json()) as { ok: boolean; extractorAvailable: boolean };
+      setServerState(health.ok ? (health.extractorAvailable ? "ready" : "extractor-missing") : "offline");
+    } catch {
+      setServerState("offline");
+    }
+  }, [apiFetch]);
+
   useEffect(() => {
-    let active = true;
-    void fetch("/api/health")
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Health check failed.");
-        return (await response.json()) as { ok: boolean; extractorAvailable: boolean };
-      })
-      .then((health) => {
-        if (active) setServerState(health.ok ? (health.extractorAvailable ? "ready" : "extractor-missing") : "offline");
-      })
-      .catch(() => {
-        if (active) setServerState("offline");
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
+    void checkServer();
+  }, [checkServer]);
 
   useEffect(() => {
     let active = true;
     async function load() {
       if (token) {
         try {
-          const response = await fetch("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } });
-          if (!response.ok) throw new Error("Session expired.");
-          const data = (await response.json()) as { user: User };
-          if (active) setUser(data.user);
-        } catch {
-          if (active) {
-            setToken(null);
-            setUser(null);
-            setRecipes((current) =>
-              current.map((recipe) => ({ ...recipe, isFavorite: false, myRating: null, canDelete: false })),
-            );
+          const response = await apiFetch("/api/auth/me");
+          if (response.status === 401) {
+            if (active) {
+              setToken(null);
+              setUser(null);
+              setRecipes((current) =>
+                current.map((recipe) => ({ ...recipe, isFavorite: false, myRating: null, canDelete: false })),
+              );
+            }
+            return;
           }
+          if (response.ok) {
+            const data = (await response.json()) as { user: User };
+            if (active) setUser(data.user);
+          }
+          // A 5xx keeps the existing session; the offline banner explains the outage.
+        } catch {
+          // Network failure: keep whatever we already have on screen.
           return;
         }
       } else if (active) {
@@ -550,13 +570,16 @@ function App() {
       }
 
       try {
-        const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
-        const response = await fetch("/api/recipes", { headers });
-        if (!response.ok) throw new Error("Recipes unavailable.");
+        const response = await apiFetch("/api/recipes");
+        if (!response.ok) {
+          if (active && response.status < 500) setNotice("Saved recipes couldn't be loaded. Refresh to try again.");
+          return;
+        }
         const data = (await response.json()) as { recipes: Recipe[] };
         if (active) setRecipes(data.recipes ?? []);
       } catch {
-        if (active) setNotice("Saved recipes couldn't be loaded. Check the recipe server and refresh.");
+        // Keep the current library; the offline banner handles the connection.
+        return;
       }
 
       if (!token) {
@@ -569,8 +592,8 @@ function App() {
 
       try {
         const [favoritesResponse, historyResponse] = await Promise.all([
-          fetch("/api/favorites", { headers: { Authorization: `Bearer ${token}` } }),
-          fetch("/api/history", { headers: { Authorization: `Bearer ${token}` } }),
+          apiFetch("/api/favorites"),
+          apiFetch("/api/history"),
         ]);
         if (active && favoritesResponse.ok) {
           const data = (await favoritesResponse.json()) as { favorites?: string[] };
@@ -588,14 +611,17 @@ function App() {
     return () => {
       active = false;
     };
-  }, [token]);
+  }, [apiFetch, token]);
 
   useEffect(() => {
     let active = true;
     let timer: number | undefined;
+    let delay = QUEUE_POLL_MS;
     async function tick() {
-      await refreshQueue();
-      if (active) timer = window.setTimeout(tick, 2000);
+      const online = await refreshQueue();
+      if (!active) return;
+      delay = online ? QUEUE_POLL_MS : Math.min(delay * 2, QUEUE_POLL_MAX_MS);
+      timer = window.setTimeout(tick, delay);
     }
     void tick();
     return () => {
@@ -603,6 +629,29 @@ function App() {
       if (timer) window.clearTimeout(timer);
     };
   }, [refreshQueue]);
+
+  const wasOffline = useRef(isOffline);
+  useEffect(() => {
+    if (wasOffline.current && !isOffline) void checkServer();
+    wasOffline.current = isOffline;
+  }, [checkServer, isOffline]);
+
+  useEffect(() => {
+    function handleOffline() {
+      setIsOffline(true);
+    }
+    function handleOnline() {
+      setIsOffline(false);
+      void refreshQueue();
+      void checkServer();
+    }
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("online", handleOnline);
+    return () => {
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", handleOnline);
+    };
+  }, [checkServer, refreshQueue]);
 
   useEffect(() => {
     knownRecipes.current = new Map(recipes.map((recipe) => [recipe.id, recipe]));
@@ -1293,7 +1342,7 @@ function App() {
       }
       setNotice("Verifying email…");
       try {
-        const response = await fetch("/api/auth/verify-email", {
+        const response = await apiFetch("/api/auth/verify-email", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email: verifyEmail, code }),
@@ -1319,7 +1368,7 @@ function App() {
       }
       setNotice("Resetting password…");
       try {
-        const response = await fetch("/api/auth/reset-password", {
+        const response = await apiFetch("/api/auth/reset-password", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email: resetEmail, code, newPassword }),
@@ -1342,7 +1391,7 @@ function App() {
     const endpoint = authMode === "register" ? "/api/auth/register" : "/api/auth/login";
     setNotice(authMode === "register" ? "Creating account…" : "Signing in…");
     try {
-      const response = await fetch(endpoint, {
+      const response = await apiFetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
@@ -1378,7 +1427,7 @@ function App() {
     if (!verifyEmail) return;
     setNotice("Sending new code…");
     try {
-      const response = await fetch("/api/auth/resend-verification", {
+      const response = await apiFetch("/api/auth/resend-verification", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: verifyEmail }),
@@ -1396,7 +1445,7 @@ function App() {
     if (!resetEmail) return;
     setNotice("Sending reset code…");
     try {
-      const response = await fetch("/api/auth/forgot-password", {
+      const response = await apiFetch("/api/auth/forgot-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: resetEmail }),
@@ -1414,7 +1463,7 @@ function App() {
     if (!resetEmail) return;
     setNotice("Sending new reset code…");
     try {
-      const response = await fetch("/api/auth/resend-password-reset", {
+      const response = await apiFetch("/api/auth/resend-password-reset", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: resetEmail }),
@@ -1439,7 +1488,7 @@ function App() {
   async function handleDeleteAccount() {
     if (!token) return;
     try {
-      const response = await fetch("/api/auth/delete-account", {
+      const response = await apiFetch("/api/auth/delete-account", {
         method: "DELETE",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       });
@@ -2024,7 +2073,15 @@ function App() {
   );
 
   return (
-    <div className="app">
+    <div className={`app${isOffline ? " offline" : ""}`}>
+      {isOffline && (
+        <div className="offline-banner" role="status" aria-live="polite">
+          <div className="offline-banner-card">
+            <span className="offline-spinner" aria-hidden="true" />
+            <span>{OFFLINE_MESSAGE}</span>
+          </div>
+        </div>
+      )}
       {content}
       {!detail && !showQueue && !showHistory && <TabBar tab={tab} onChange={setTab} />}
       {showAccount && (

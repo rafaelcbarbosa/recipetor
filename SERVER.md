@@ -220,6 +220,10 @@ bars track fetching, extracting, and saving. The remote job API exposes the same
 
 ## Telemetry (admin only)
 
+The app's service worker deliberately does **not** cache `/api/*` responses. Caching
+them hides outages behind stale data and prevents the offline banner from appearing.
+Shell navigation and hashed assets are still cached for offline loading.
+
 `GET /telemetry` serves a standalone dashboard that is not linked from the main
 app. Sign in with the Recipetor admin account (the same email/password as the
 main app). Data comes from the admin-only `GET /api/telemetry` endpoint and

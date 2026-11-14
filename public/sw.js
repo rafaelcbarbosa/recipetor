@@ -1,4 +1,4 @@
-const CACHE_NAME = "recipetor-shell-20b53cb";
+const CACHE_NAME = "recipetor-shell-30f5991";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/recipetor.svg", "/commit-info.json"];
 
 self.addEventListener("install", (event) => {
@@ -32,6 +32,9 @@ self.addEventListener("fetch", (event) => {
   if (
     request.method !== "GET" ||
     url.origin !== self.location.origin ||
+    // API responses are always live: caching them would hide outages behind
+    // stale data and prevent the app from noticing a dropped connection.
+    url.pathname.startsWith("/api/") ||
     (request.mode !== "navigate" && !url.pathname.startsWith("/assets/"))
   ) {
     return;

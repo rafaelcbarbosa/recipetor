@@ -185,6 +185,7 @@ Usage events are retained **90 days**. Signed-out activity is anonymous; signed-
 - **Auto-favorite:** a signed-in user's imported, joined, manual, or already-saved recipe is favorited immediately. Signed-out imports are saved to the shared library without a favorite.
 - **Deletion:** the site admin may delete any recipe; the original loader may delete their own. Legacy recipes with no loader can only be deleted by the admin.
 - **Refresh:** queue polling every 2 seconds; the Library list updates when background jobs complete.
+- **Connection loss:** any request that fails (network error, timeout, or a 5xx/530 from the tunnel) shows a glass banner at the top with a spinner and the message "Looks like the app is down… and Coxinha is definitely working on it. Go get a coffee and come back in a few." Existing content stays on screen, queue polling backs off from 2 seconds up to 15 seconds, and the banner clears on the first successful request. Session cookies/tokens are not cleared by a network failure.
 
 ## 3. Data these screens need
 
