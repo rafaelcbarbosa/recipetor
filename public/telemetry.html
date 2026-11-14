@@ -149,6 +149,15 @@
         return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
       };
       const formatMs = (ms) => (ms == null ? "—" : `${(ms / 1000).toFixed(1)}s`);
+      const formatUptime = (seconds) => {
+        if (seconds == null) return "—";
+        const days = Math.floor(seconds / 86400);
+        const hours = Math.floor((seconds % 86400) / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        if (days > 0) return `${days}d ${hours}h`;
+        if (hours > 0) return `${hours}h ${minutes}m`;
+        return `${minutes}m`;
+      };
       const formatDate = (iso) => (iso ? new Date(iso).toLocaleString() : "—");
 
       const table = (headers, rows, renderRow, emptyText) => {
@@ -190,6 +199,9 @@
 
       function render(data) {
         const stats = [
+          ["App", data.status.ok ? "Online" : "Offline", `version ${data.status.version || "dev"}`],
+          ["Extractor", data.status.extractorAvailable ? "Ready" : "Offline", data.status.extractorBackend || "unknown"],
+          ["Uptime", formatUptime(data.status.uptimeSeconds), "since last restart"],
           ["Recipes", data.recipes.total, `${data.recipes.latest.length} latest shown`],
           ["Users", data.users.total, `${data.users.activeLast7Days} active in 7d`],
           ["Active users", data.users.activeLast30Days, "last 30 days"],

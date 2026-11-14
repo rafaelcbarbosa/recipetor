@@ -1,5 +1,5 @@
 {
-  "hash": "2dab07b",
-  "date": "2026-11-14 11:12:36 -0600",
-  "message": "Add admin telemetry dashboard"
+  "hash": "d9e8f17",
+  "date": "2026-11-14 11:14:42 -0600",
+  "message": "Keep telemetry writes best effort"
 }
