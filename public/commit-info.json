@@ -1,5 +1,5 @@
 {
-  "hash": "c59c1f2",
-  "date": "2026-11-14 10:33:14 -0600",
-  "message": "Hide manually processed failures from the queue"
+  "hash": "1ca889b",
+  "date": "2026-11-14 10:35:37 -0600",
+  "message": "Hide failures once their link has a recipe"
 }

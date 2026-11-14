@@ -1208,7 +1208,7 @@ function App() {
         setImportJob(result.job);
         setInstagramLink("");
         setNotice("Added to the backlog. You can add another link while it processes.");
-        void refreshQueue();
+        openBacklog();
         void pollJobStatus(result.job.id);
         return;
       }
