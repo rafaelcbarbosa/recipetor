@@ -4,6 +4,9 @@ import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import nodemailer from "nodemailer";
 
+const FINISHED_JOB_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const COMPLETED_JOB_LIMIT = 10;
+
 function createTransporter() {
   // Use local Postfix relay if available (no auth needed on localhost)
   // Falls back to SMTP_* env vars for external SMTP
@@ -825,6 +828,23 @@ export function createRecipeStore(
       }));
   }
 
+  function getRecentFailedJob(url) {
+    const now = Date.now();
+    return (
+      getExtractionJobsByUrl(url).find((job) => {
+        if (job.status !== "failed") return false;
+        const updated = Date.parse(job.updatedAt);
+        return Number.isFinite(updated) && now - updated <= FINISHED_JOB_MAX_AGE_MS;
+      }) ?? null
+    );
+  }
+
+  function linkExtractionJobToRecipe(jobId, recipeId) {
+    if (!jobId || !recipeId) return;
+    db.prepare("UPDATE extraction_jobs SET recipe_id = ?, updated_at = ? WHERE id = ?")
+      .run(recipeId, new Date().toISOString(), jobId);
+  }
+
   function listExtractionJobs() {
     return db
       .prepare("SELECT * FROM extraction_jobs ORDER BY created_at DESC")
@@ -907,10 +927,22 @@ export function createRecipeStore(
   function listPublicExtractionJobs(userId = null) {
     const rows = db.prepare("SELECT * FROM extraction_jobs ORDER BY created_at ASC").all();
     const positions = activeJobPositions();
+    const now = Date.now();
+    const activeRows = rows.filter((row) => row.status === "pending" || row.status === "processing");
+    const failedRows = rows.filter((row) => {
+      if (row.status !== "failed") return false;
+      const updated = Date.parse(row.updated_at);
+      return Number.isFinite(updated) && now - updated <= FINISHED_JOB_MAX_AGE_MS;
+    });
+    const completedRows = rows
+      .filter((row) => row.status === "completed")
+      .sort((left, right) => String(right.updated_at).localeCompare(String(left.updated_at)))
+      .slice(0, COMPLETED_JOB_LIMIT);
+    const visibleRows = [...activeRows, ...failedRows, ...completedRows];
     const watched = userId
       ? new Set(watchersByUser.all(userId).map((row) => row.job_id))
       : new Set();
-    return rows
+    return visibleRows
       .map((row) => toPublicJob(row, positions.get(row.id), userId, watched.has(row.id)))
       .sort((left, right) => {
         const leftActive = left.position !== null;
@@ -1473,6 +1505,8 @@ export function createRecipeStore(
     getExtractionJob,
     getExtractionJobByUrl,
     getExtractionJobsByUrl,
+    getRecentFailedJob,
+    linkExtractionJobToRecipe,
     listExtractionJobs,
     listPublicExtractionJobs,
     getPublicExtractionJob,

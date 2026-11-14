@@ -84,9 +84,12 @@ type Tab = "recipes" | "add" | "favorites";
 type DetailOrigin = "library" | "favorites" | "queue" | "history";
 type IngredientSheetMode = "unit" | "quantity";
 type IngredientSheetState = { index: number; mode: IngredientSheetMode };
+type FailureDialogState = { jobId: string; message: string };
+type ManualIngredient = { amount: string; unit: string; name: string; kcal: string };
 type ServerState = "checking" | "ready" | "extractor-missing" | "offline";
 
 const MEAL_OPTIONS = ["Breakfast", "Lunch", "Dinner", "Dessert", "Snack"];
+const MANUAL_CATEGORIES = ["Breakfast", "Lunch", "Dinner", "Dessert", "Snack", "Other"];
 const DIET_OPTIONS = ["Vegan", "Vegetarian", "Gluten-free", "Low-carb", "Dairy-free", "Pescatarian", "High-protein"];
 const STAGE_LABELS = ["Queued", "Fetching", "Extracting", "Saving"];
 const numberFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
@@ -431,6 +434,20 @@ function App() {
   const [ingredientUnitDraft, setIngredientUnitDraft] = useState("");
   const [isSavingIngredient, setIsSavingIngredient] = useState(false);
 
+  const [failureDialog, setFailureDialog] = useState<FailureDialogState | null>(null);
+  const [manualSheet, setManualSheet] = useState<{ jobId: string } | null>(null);
+  const [manualTitle, setManualTitle] = useState("");
+  const [manualCategory, setManualCategory] = useState("Dinner");
+  const [manualCuisine, setManualCuisine] = useState("");
+  const [manualServings, setManualServings] = useState("");
+  const [manualPrep, setManualPrep] = useState("");
+  const [manualDescription, setManualDescription] = useState("");
+  const [manualSteps, setManualSteps] = useState("");
+  const [manualIngredients, setManualIngredients] = useState<ManualIngredient[]>([
+    { amount: "", unit: "g", name: "", kcal: "" },
+  ]);
+  const [isSavingManual, setIsSavingManual] = useState(false);
+
   const [instagramLink, setInstagramLink] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [importJob, setImportJob] = useState<ImportJob | null>(null);
@@ -638,7 +655,14 @@ function App() {
   }, [queueJobs, apiFetch]);
 
   const overlayOpen = Boolean(
-    showAccount || authMode || showDeleteConfirm || showSources || showTagSheet || ingredientSheet,
+    showAccount ||
+      authMode ||
+      showDeleteConfirm ||
+      showSources ||
+      showTagSheet ||
+      ingredientSheet ||
+      failureDialog ||
+      manualSheet,
   );
   useEffect(() => {
     if (!overlayOpen) return;
@@ -652,7 +676,9 @@ function App() {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
-      if (ingredientSheet) setIngredientSheet(null);
+      if (manualSheet) setManualSheet(null);
+      else if (failureDialog) setFailureDialog(null);
+      else if (ingredientSheet) setIngredientSheet(null);
       else if (showTagSheet) setShowTagSheet(false);
       else if (showSources) setShowSources(false);
       else if (showDeleteConfirm) setShowDeleteConfirm(false);
@@ -672,8 +698,8 @@ function App() {
     [queueJobs],
   );
   const ownJob = activeJobs.find((job) => job.isMine) ?? null;
-  const finishedJobs = useMemo(
-    () => queueJobs.filter((job) => job.status === "completed" || job.status === "failed").slice(0, 8),
+  const failedJobs = useMemo(
+    () => queueJobs.filter((job) => job.status === "failed"),
     [queueJobs],
   );
   const cuisineOptions = useMemo(
@@ -931,22 +957,169 @@ function App() {
     void saveIngredient(ingredientSheet.index, { amount, unit: ingredientUnitDraft });
   }
 
-  async function retryJob(job: QueueJob) {
+  async function retryFailedJob(jobId: string) {
     if (!user) {
       setAuthMode("login");
-      setNotice("Sign in to retry an import.");
+      setNotice("Sign in to try again.");
       return;
     }
     try {
-      const response = await apiFetch(`/api/recipes/import/retry/${job.id}`, { method: "POST" });
-      if (!response.ok) {
-        const data = (await response.json().catch(() => ({}))) as { error?: string };
-        throw new Error(data.error ?? "Couldn't retry this import.");
-      }
+      const response = await apiFetch(`/api/recipes/import/retry/${jobId}`, { method: "POST" });
+      const data = (await response.json().catch(() => ({}))) as { job?: ImportJob; error?: string };
+      if (!response.ok || !data.job) throw new Error(data.error ?? "Couldn't retry this import.");
+      setFailureDialog(null);
+      setImportJob(data.job);
+      setInstagramLink("");
       setNotice("Retry queued.");
-      await refreshQueue();
+      void refreshQueue();
+      void pollJobStatus(data.job.id);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Couldn't retry this import.");
+    }
+  }
+
+  function openManualSheet(job: QueueJob) {
+    if (!user) {
+      setAuthMode("login");
+      setNotice("Sign in to add a recipe manually.");
+      return;
+    }
+    setNotice("");
+    setManualSheet({ jobId: job.id });
+    setManualTitle("");
+    setManualCategory("Dinner");
+    setManualCuisine("");
+    setManualServings("");
+    setManualPrep("");
+    setManualDescription("");
+    setManualSteps("");
+    setManualIngredients([{ amount: "", unit: "g", name: "", kcal: "" }]);
+  }
+
+  function updateManualIngredient(index: number, patch: Partial<ManualIngredient>) {
+    setManualIngredients((current) =>
+      current.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)),
+    );
+  }
+
+  function addManualIngredient() {
+    setManualIngredients((current) => [...current, { amount: "", unit: "g", name: "", kcal: "" }]);
+  }
+
+  function removeManualIngredient(index: number) {
+    setManualIngredients((current) =>
+      current.length <= 1 ? current : current.filter((_, itemIndex) => itemIndex !== index),
+    );
+  }
+
+  async function saveManualRecipe() {
+    if (!manualSheet) return;
+    if (!user) {
+      setAuthMode("login");
+      return;
+    }
+    const title = manualTitle.trim();
+    const ingredients = manualIngredients
+      .filter((item) => item.name.trim())
+      .map((item) => {
+        const amount = item.amount.trim() === "" ? null : Number(item.amount);
+        const calories = item.kcal.trim() === "" ? null : Number(item.kcal);
+        return {
+          amount,
+          unit: item.unit.trim(),
+          name: item.name.trim(),
+          nutrition: { calories, protein: null, carbs: null, fat: null },
+        };
+      });
+    const steps = manualSteps
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (!title) {
+      setNotice("Add a recipe title.");
+      return;
+    }
+    if (ingredients.length === 0) {
+      setNotice("Add at least one ingredient.");
+      return;
+    }
+    if (steps.length === 0) {
+      setNotice("Add at least one step.");
+      return;
+    }
+    if (
+      ingredients.some(
+        (item) => item.amount != null && (!Number.isFinite(item.amount) || item.amount < 0),
+      )
+    ) {
+      setNotice("Enter valid ingredient amounts.");
+      return;
+    }
+    if (
+      ingredients.some(
+        (item) =>
+          item.nutrition.calories != null &&
+          (!Number.isFinite(item.nutrition.calories) || item.nutrition.calories < 0),
+      )
+    ) {
+      setNotice("Enter valid ingredient calories.");
+      return;
+    }
+    const prep = manualPrep.trim() === "" ? null : Number(manualPrep);
+    if (prep != null && (!Number.isInteger(prep) || prep < 1 || prep > 1440)) {
+      setNotice("Prep time must be 1-1440 minutes.");
+      return;
+    }
+    const servings = manualServings.trim() === "" ? null : Number(manualServings);
+    if (servings != null && (!Number.isFinite(servings) || servings < 1 || servings > 1000)) {
+      setNotice("Servings must be between 1 and 1000.");
+      return;
+    }
+
+    setIsSavingManual(true);
+    try {
+      const response = await apiFetch("/api/recipes/manual", {
+        method: "POST",
+        body: JSON.stringify({
+          jobId: manualSheet.jobId,
+          recipe: {
+            title,
+            description: manualDescription.trim().slice(0, 500),
+            category: manualCategory,
+            cuisine: manualCuisine.trim().slice(0, 50),
+            mealTypes: [],
+            dietTags: [],
+            customTags: [],
+            prepTimeMinutes: prep,
+            basePortions: servings,
+            ingredients,
+            instructions: steps,
+            totals: null,
+          },
+        }),
+      });
+      const data = (await response.json().catch(() => ({}))) as { recipe?: Recipe; error?: string };
+      if (!response.ok || !data.recipe) throw new Error(data.error ?? "Couldn't save the recipe.");
+      const recipe = data.recipe;
+      setManualSheet(null);
+      knownRecipes.current.set(recipe.id, recipe);
+      setRecipes((current) => [recipe, ...current.filter((item) => item.id !== recipe.id)]);
+      setFavorites((current) => (current.includes(recipe.id) ? current : [...current, recipe.id]));
+      setHistory((current) =>
+        current.some((entry) => entry.id === recipe.id)
+          ? current
+          : [{ ...recipe, action: "added", createdAt: new Date().toISOString() }, ...current],
+      );
+      setShowQueue(false);
+      setTab("recipes");
+      openRecipe(recipe, "library");
+      setNotice("Recipe added.");
+      void refreshQueue();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Couldn't save the recipe.");
+    } finally {
+      setIsSavingManual(false);
     }
   }
 
@@ -1002,12 +1175,23 @@ function App() {
         throw new Error(data.error ?? "Recipe import failed. Try again.");
       }
       const result = (await response.json()) as {
+        alreadyFailed?: boolean;
         job?: ImportJob;
         recipe?: Recipe;
         duplicate?: boolean;
         reason?: string;
         message?: string;
       };
+      if (result.alreadyFailed && result.job) {
+        setNotice("");
+        setFailureDialog({
+          jobId: result.job.id,
+          message:
+            result.message ??
+            "This link was tried before but it was not possible to extract the recipe.",
+        });
+        return;
+      }
       if (result.recipe) {
         registerImportedRecipe(
           result.recipe,
@@ -1578,19 +1762,17 @@ function App() {
         </div>
       </section>
 
-      {finishedJobs.length > 0 && (
+      {failedJobs.length > 0 && (
         <section>
-          <h2 className="group-head">Recently finished</h2>
+          <h2 className="group-head">Couldn’t be extracted</h2>
           <div className="group">
-            {finishedJobs.map((job) =>
-              job.status === "completed" ? (
+            {failedJobs.map((job) =>
+              job.recipeId ? (
                 <button
                   type="button"
                   className="queue-row"
                   key={job.id}
-                  onClick={() => {
-                    if (job.recipeId) void openRecipeById(job.recipeId, "queue");
-                  }}
+                  onClick={() => void openRecipeById(job.recipeId!, "queue")}
                 >
                   <Icon name="check-circle" className="queue-ready" />
                   <span className="queue-row-text">
@@ -1600,7 +1782,7 @@ function App() {
                       </span>
                       {job.isMine && <span className="you-chip">You</span>}
                     </span>
-                    <span className="queue-row-sub">Ready · tap to open</span>
+                    <span className="queue-row-sub">Recipe added manually · tap to open</span>
                   </span>
                   <Icon name="chevron-right" className="queue-waiting" />
                 </button>
@@ -1615,8 +1797,8 @@ function App() {
                     <span className="queue-row-sub">Couldn’t read this post</span>
                   </span>
                   {job.canRetry && (
-                    <button type="button" className="retry-btn" onClick={() => void retryJob(job)}>
-                      Retry
+                    <button type="button" className="retry-btn manual-entry-btn" onClick={() => openManualSheet(job)}>
+                      Enter manually
                     </button>
                   )}
                 </div>
@@ -1719,7 +1901,23 @@ function App() {
         backlogCount={activeJobs.length}
       />
 
-      <div className="search">
+      {tab === "favorites" && !user ? (
+        <div className="signin-gate">
+          <span className="signin-gate-icon">
+            <Icon name="heart" size={28} filled />
+          </span>
+          <h2>Sign in to see your favorites</h2>
+          <p>Your favorites and history sync across devices.</p>
+          <button type="button" className="primary-btn" onClick={() => setAuthMode("login")}>
+            Sign in
+          </button>
+          <button type="button" className="secondary-btn" onClick={() => setAuthMode("register")}>
+            Create account
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="search">
         <Icon name="search" />
         <label className="sr-only" htmlFor="recipe-search">
           Search recipes or ingredients
@@ -1792,6 +1990,8 @@ function App() {
         </div>
       ) : (
         <EmptyState title={emptyTitle} body={emptyBody} />
+      )}
+        </>
       )}
     </div>
   );
@@ -2053,6 +2253,242 @@ function App() {
                 </button>
               </div>
             )}
+          </section>
+        </div>
+      )}
+
+      {failureDialog && (
+        <div
+          className="sheet-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setFailureDialog(null);
+          }}
+        >
+          <section className="sheet" role="alertdialog" aria-modal="true" aria-labelledby="failure-title">
+            <div className="sheet-head">
+              <h2 id="failure-title">Link already tried</h2>
+              <button type="button" className="round-btn" aria-label="Close" onClick={() => setFailureDialog(null)}>
+                <Icon name="x" />
+              </button>
+            </div>
+            <p>{failureDialog.message}</p>
+            <div className="sheet-actions">
+              {user ? (
+                <button
+                  type="button"
+                  className="primary-btn"
+                  onClick={() => void retryFailedJob(failureDialog.jobId)}
+                >
+                  Try again
+                </button>
+              ) : (
+                <button type="button" className="primary-btn" onClick={() => setAuthMode("login")}>
+                  Sign in to try again
+                </button>
+              )}
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => {
+                  setFailureDialog(null);
+                  setInstagramLink("");
+                  setNotice("Request cancelled.");
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {manualSheet && (
+        <div
+          className="sheet-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setManualSheet(null);
+          }}
+        >
+          <section className="sheet manual-sheet" role="dialog" aria-modal="true" aria-labelledby="manual-title">
+            <div className="sheet-head">
+              <h2 id="manual-title">Add recipe manually</h2>
+              <button type="button" className="round-btn" aria-label="Close" onClick={() => setManualSheet(null)}>
+                <Icon name="x" />
+              </button>
+            </div>
+            <p className="sheet-hint">The link will be attached, so future submissions open this recipe.</p>
+            <div className="auth-form">
+              <div className="field">
+                <label htmlFor="manual-title-input">Title</label>
+                <input
+                  id="manual-title-input"
+                  value={manualTitle}
+                  onChange={(event) => setManualTitle(event.target.value)}
+                  maxLength={150}
+                  placeholder="Recipe name"
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="manual-category">Category</label>
+                <div className="select-wrap">
+                  <select
+                    id="manual-category"
+                    value={manualCategory}
+                    onChange={(event) => setManualCategory(event.target.value)}
+                  >
+                    {MANUAL_CATEGORIES.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                  </select>
+                  <Icon name="chevrons-up-down" size={16} />
+                </div>
+              </div>
+              <div className="field">
+                <label htmlFor="manual-cuisine">Cuisine</label>
+                <input
+                  id="manual-cuisine"
+                  value={manualCuisine}
+                  onChange={(event) => setManualCuisine(event.target.value)}
+                  maxLength={50}
+                  placeholder="e.g. Italian"
+                />
+              </div>
+              <div className="manual-grid">
+                <div className="field">
+                  <label htmlFor="manual-servings">Servings</label>
+                  <input
+                    id="manual-servings"
+                    type="number"
+                    min="1"
+                    max="1000"
+                    step="1"
+                    value={manualServings}
+                    onChange={(event) => setManualServings(event.target.value)}
+                    placeholder="4"
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="manual-prep">Prep minutes</label>
+                  <input
+                    id="manual-prep"
+                    type="number"
+                    min="1"
+                    max="1440"
+                    step="1"
+                    value={manualPrep}
+                    onChange={(event) => setManualPrep(event.target.value)}
+                    placeholder="30"
+                  />
+                </div>
+              </div>
+              <div className="field">
+                <label htmlFor="manual-description">Description</label>
+                <textarea
+                  id="manual-description"
+                  rows={2}
+                  maxLength={500}
+                  value={manualDescription}
+                  onChange={(event) => setManualDescription(event.target.value)}
+                />
+              </div>
+
+              <h3 className="manual-heading">Ingredients</h3>
+              {manualIngredients.map((ingredient, index) => (
+                <div className="manual-ingredient" key={index}>
+                  <div className="manual-ingredient-top">
+                    <input
+                      className="manual-amount"
+                      aria-label={`Ingredient ${index + 1} amount`}
+                      type="number"
+                      min="0"
+                      step="any"
+                      placeholder="Qty"
+                      value={ingredient.amount}
+                      onChange={(event) => updateManualIngredient(index, { amount: event.target.value })}
+                    />
+                    <div className="select-wrap manual-unit">
+                      <select
+                        aria-label={`Ingredient ${index + 1} unit`}
+                        value={ingredient.unit}
+                        onChange={(event) => updateManualIngredient(index, { unit: event.target.value })}
+                      >
+                        <option value="">No unit</option>
+                        {UNIT_GROUPS.map((group) => (
+                          <optgroup key={group.label} label={group.label}>
+                            {group.units.map((unit) => (
+                              <option key={unit} value={unit}>
+                                {unit}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                      <Icon name="chevrons-up-down" size={14} />
+                    </div>
+                    <input
+                      className="manual-name"
+                      aria-label={`Ingredient ${index + 1} name`}
+                      placeholder="Ingredient"
+                      maxLength={250}
+                      value={ingredient.name}
+                      onChange={(event) => updateManualIngredient(index, { name: event.target.value })}
+                    />
+                    <button
+                      type="button"
+                      className="manual-remove"
+                      aria-label={`Remove ingredient ${index + 1}`}
+                      onClick={() => removeManualIngredient(index)}
+                      disabled={manualIngredients.length <= 1}
+                    >
+                      <Icon name="x" size={16} />
+                    </button>
+                  </div>
+                  <input
+                    className="manual-kcal"
+                    aria-label={`Ingredient ${index + 1} calories`}
+                    type="number"
+                    min="0"
+                    step="any"
+                    placeholder="kcal (optional)"
+                    value={ingredient.kcal}
+                    onChange={(event) => updateManualIngredient(index, { kcal: event.target.value })}
+                  />
+                </div>
+              ))}
+              <button type="button" className="manual-add" onClick={addManualIngredient}>
+                <Icon name="plus-circle" size={16} /> Add ingredient
+              </button>
+
+              <h3 className="manual-heading">Steps</h3>
+              <div className="field">
+                <label className="sr-only" htmlFor="manual-steps">
+                  Steps
+                </label>
+                <textarea
+                  id="manual-steps"
+                  rows={5}
+                  placeholder="One step per line"
+                  value={manualSteps}
+                  onChange={(event) => setManualSteps(event.target.value)}
+                />
+              </div>
+
+              <button
+                type="button"
+                className="primary-btn"
+                disabled={isSavingManual}
+                onClick={() => void saveManualRecipe()}
+              >
+                {isSavingManual ? "Saving…" : "Save recipe"}
+              </button>
+              <button type="button" className="secondary-btn" onClick={() => setManualSheet(null)}>
+                Cancel
+              </button>
+            </div>
           </section>
         </div>
       )}

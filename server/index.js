@@ -5,6 +5,7 @@ import { dirname, extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRecipeStore } from "./recipe-store.js";
 import { createHttpExtractor, isHttpExtractorAvailable, useHttpExtractor } from "./http-extractor.js";
+import { validateRecipeResult } from "./recipe-schema.js";
 import { createScriptExtractor, isScriptAvailable } from "./script-extractor.js";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
@@ -545,13 +546,25 @@ export function createServer({
         return jsonResponse(response, 200, { recipe, duplicate: true, reason: "source" });
       }
 
-      // Check for existing job for this URL
+      // Check for an active job for this URL first, so new submissions join
+      // the retry instead of being blocked by an old failure.
       const existingJob = store.getExtractionJobByUrl(url);
       if (existingJob && existingJob.status !== "completed" && existingJob.status !== "failed") {
         if (userId) store.addJobWatcher(existingJob.id, userId);
         return jsonResponse(response, 200, {
           job: store.getPublicExtractionJob(existingJob.id, userId),
           message: "Recipe extraction already in progress. Check status endpoint for progress.",
+        });
+      }
+
+      // A failed job stays visible for 24h. Ask the user before retrying it.
+      const recentFailed = store.getRecentFailedJob(url);
+      if (recentFailed) {
+        if (userId) store.addJobWatcher(recentFailed.id, userId);
+        return jsonResponse(response, 200, {
+          alreadyFailed: true,
+          job: store.getPublicExtractionJob(recentFailed.id, userId),
+          message: "This link was tried before but it was not possible to extract the recipe.",
         });
       }
 
@@ -590,9 +603,47 @@ export function createServer({
       const result = store.retryExtractionJob(retryMatch[1], userId);
       if (result.error === "NOT_FOUND") return jsonResponse(response, 404, { error: "Job not found." });
       if (result.error === "NOT_FAILED") return jsonResponse(response, 409, { error: "This job did not fail." });
-      if (result.error === "FORBIDDEN") return jsonResponse(response, 403, { error: "Only the job's owner can retry it." });
+      if (result.error === "FORBIDDEN") return jsonResponse(response, 403, { error: "Only the job's owner or watchers can retry it." });
       enqueueJob(result.job.id, store.getExtractionJob(result.job.id).url, userId);
       return jsonResponse(response, 202, { job: result.job });
+    }
+
+    // Save a manually entered recipe for a failed job, attaching its link.
+    if (pathname === "/api/recipes/manual" && request.method === "POST") {
+      checkSameOrigin(request);
+      const userId = extractUserId(request);
+      if (!userId) return jsonResponse(response, 401, { error: "Authentication required." });
+
+      const body = await readJson(request);
+      const jobId = body?.jobId ? String(body.jobId) : "";
+      if (!jobId) return jsonResponse(response, 400, { error: "A failed job is required." });
+      const job = store.getExtractionJob(jobId);
+      if (!job) return jsonResponse(response, 404, { error: "Job not found." });
+      if (job.created_by && job.created_by !== userId && !store.isJobWatcher(jobId, userId)) {
+        return jsonResponse(response, 403, { error: "Only the job's creator or a watcher can add this recipe." });
+      }
+
+      let recipe;
+      try {
+        recipe = validateRecipeResult(body?.recipe);
+      } catch (error) {
+        return jsonResponse(response, 400, {
+          error: error instanceof Error ? error.message : "The recipe is invalid.",
+        });
+      }
+
+      const saved = store.saveImported(job.url, recipe, userId, isAdminRequest(request));
+      store.linkExtractionJobToRecipe(jobId, saved.recipe.id);
+      for (const watcherId of store.listJobWatchers(jobId)) {
+        if (store.addFavorite(watcherId, saved.recipe.id)) {
+          store.addToHistory(watcherId, saved.recipe.id, "added");
+        }
+      }
+
+      return jsonResponse(response, 200, {
+        recipe: store.getRecipe(saved.recipe.id, userId, isAdminRequest(request)),
+        job: store.getPublicExtractionJob(jobId, userId),
+      });
     }
 
     // Get extraction job status by job ID

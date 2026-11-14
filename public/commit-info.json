@@ -1,5 +1,5 @@
 {
-  "hash": "a0c6f34",
-  "date": "2026-11-13 20:29:55 -0600",
-  "message": "Track job watchers and serve relative media paths"
+  "hash": "7d099af",
+  "date": "2026-11-13 20:32:21 -0600",
+  "message": "Backfill job creators as watchers"
 }

@@ -393,3 +393,50 @@ test("tracks job creators and watchers as owners of a queued job", () => {
     cleanup();
   }
 });
+
+test("hides old failures and caps completed jobs in the public queue", () => {
+  const directory = mkdtempSync(join(tmpdir(), "recipetor-queue-"));
+  const databasePath = join(directory, "recipes.sqlite");
+  const store = createRecipeStore(databasePath, {
+    generateCode: () => "123456",
+    emailSender: async () => true,
+  });
+  const db = new DatabaseSync(databasePath);
+
+  try {
+    const user = store.createUser("queue@example.com", "secret1");
+    const active = store.createExtractionJob("https://www.instagram.com/p/ACTIVE/", user.id);
+
+    const recentFail = store.createExtractionJob("https://www.instagram.com/p/FAIL-RECENT/", user.id);
+    store.updateExtractionJob(recentFail.id, { status: "failed", stage: "failed", progress: 100 });
+
+    const oldFail = store.createExtractionJob("https://www.instagram.com/p/FAIL-OLD/", user.id);
+    store.updateExtractionJob(oldFail.id, { status: "failed", stage: "failed", progress: 100 });
+    db.prepare("UPDATE extraction_jobs SET updated_at = ? WHERE id = ?").run(
+      new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+      oldFail.id,
+    );
+
+    for (let index = 0; index < 12; index += 1) {
+      const job = store.createExtractionJob(`https://www.instagram.com/p/DONE-${index}/`, user.id);
+      store.updateExtractionJob(job.id, {
+        status: "completed",
+        stage: "completed",
+        progress: 100,
+        recipeId: null,
+      });
+    }
+
+    const jobs = store.listPublicExtractionJobs(user.id);
+    const ids = jobs.map((job) => job.id);
+    assert.ok(ids.includes(active.id));
+    assert.ok(ids.includes(recentFail.id));
+    assert.ok(!ids.includes(oldFail.id));
+    assert.equal(jobs.filter((job) => job.status === "failed").length, 1);
+    assert.equal(jobs.filter((job) => job.status === "completed").length, 10);
+  } finally {
+    db.close();
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

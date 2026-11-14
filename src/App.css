@@ -1335,6 +1335,18 @@ button.queue-row {
   color: var(--muted);
 }
 
+.field textarea {
+  padding: 12px 14px;
+  min-height: 76px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--field);
+  font: inherit;
+  font-size: 17px;
+  outline: none;
+  resize: vertical;
+}
+
 .select-wrap {
   position: relative;
 }
@@ -1498,3 +1510,146 @@ button.queue-row {
 }
 
 
+
+/* Manual recipe entry */
+.manual-sheet {
+  max-height: 92dvh;
+}
+
+.manual-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.manual-heading {
+  margin: 8px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.manual-ingredient {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 16px;
+  background: var(--canvas);
+}
+
+.manual-ingredient-top {
+  display: grid;
+  grid-template-columns: 56px 76px 1fr 44px;
+  align-items: center;
+  gap: 6px;
+}
+
+.manual-ingredient input {
+  height: 44px;
+  min-width: 0;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--surface);
+  font: inherit;
+  font-size: 15px;
+  outline: none;
+}
+
+.manual-ingredient input::placeholder {
+  color: var(--muted);
+}
+
+.manual-unit select {
+  background: var(--surface);
+  font-size: 15px;
+  padding: 0 28px 0 10px;
+}
+
+.manual-unit > svg {
+  top: 15px;
+  right: 8px;
+}
+
+.manual-kcal {
+  width: 140px;
+}
+
+.manual-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.manual-remove:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.manual-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--tomato-action);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.manual-entry-btn {
+  font-size: 15px;
+}
+
+/* Signed-out favorites gate */
+.signin-gate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
+  padding: 32px 20px;
+  border-radius: 20px;
+  background: var(--surface);
+  text-align: center;
+}
+
+.signin-gate-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 32px;
+  background: var(--butter);
+  color: var(--tomato);
+}
+
+.signin-gate h2 {
+  margin: 4px 0 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.signin-gate p {
+  margin: 0 0 4px;
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.signin-gate .primary-btn,
+.signin-gate .secondary-btn {
+  width: 100%;
+}

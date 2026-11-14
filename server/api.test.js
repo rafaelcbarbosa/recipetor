@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { createServer } from "./index.js";
 import { createRecipeStore } from "./recipe-store.js";
@@ -24,12 +25,14 @@ const recipe = {
 
 function createTestStore() {
   const directory = mkdtempSync(join(tmpdir(), "recipetor-api-"));
-  const store = createRecipeStore(join(directory, "recipes.sqlite"), {
+  const databasePath = join(directory, "recipes.sqlite");
+  const store = createRecipeStore(databasePath, {
     generateCode: () => "123456",
     emailSender: async () => true,
   });
   return {
     store,
+    databasePath,
     cleanup() {
       store.close();
       rmSync(directory, { recursive: true, force: true });
@@ -805,5 +808,140 @@ test("serves thumbnails from a relative media directory", async () => {
     await stopServer(server);
     cleanup();
     rmSync(relativeDir, { recursive: true, force: true });
+  }
+});
+
+test("asks before retrying a recently failed link", async () => {
+  const { store, cleanup } = createTestStore();
+  const { server, baseUrl } = await startServer(store);
+
+  try {
+    const user = await createVerifiedUser(baseUrl, "failed-link@example.com");
+    const url = "https://www.instagram.com/p/FAILED-ONCE/";
+    const job = store.createExtractionJob(url, user.user.id);
+    store.updateExtractionJob(job.id, {
+      status: "failed",
+      stage: "failed",
+      progress: 100,
+      errorMessage: "Extraction failed: nope",
+    });
+
+    const response = await request(baseUrl, "/api/recipes/import", {
+      method: "POST",
+      token: user.token,
+      body: { url },
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.alreadyFailed, true);
+    assert.match(body.message, /tried before/);
+    assert.equal(body.job.id, job.id);
+    assert.equal(body.job.isMine, true);
+    assert.equal(store.getExtractionJobsByUrl(url).length, 1);
+    assert.equal(store.isJobWatcher(job.id, user.user.id), true);
+  } finally {
+    await stopServer(server);
+    cleanup();
+  }
+});
+
+test("creates a new job when the previous failure is older than 24h", async () => {
+  const { store, databasePath, cleanup } = createTestStore();
+  const { server, baseUrl } = await startServer(store);
+
+  try {
+    const user = await createVerifiedUser(baseUrl, "failed-old@example.com");
+    const url = "https://www.instagram.com/p/FAILED-OLD/";
+    const job = store.createExtractionJob(url, user.user.id);
+    store.updateExtractionJob(job.id, {
+      status: "failed",
+      stage: "failed",
+      progress: 100,
+      errorMessage: "Extraction failed: old",
+    });
+    const db = new DatabaseSync(databasePath);
+    db.prepare("UPDATE extraction_jobs SET updated_at = ? WHERE id = ?")
+      .run(new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(), job.id);
+    db.close();
+
+    const response = await request(baseUrl, "/api/recipes/import", {
+      method: "POST",
+      token: user.token,
+      body: { url },
+    });
+    assert.equal(response.status, 202);
+    const body = await response.json();
+    assert.ok(body.job.id);
+    assert.notEqual(body.job.id, job.id);
+    assert.equal(store.getExtractionJobsByUrl(url).length, 2);
+  } finally {
+    await stopServer(server);
+    cleanup();
+  }
+});
+
+test("manual entry saves a recipe, attaches the failed link, and favorites watchers", async () => {
+  const { store, cleanup } = createTestStore();
+  const { server, baseUrl } = await startServer(store);
+
+  try {
+    const owner = await createVerifiedUser(baseUrl, "manual-owner@example.com");
+    const watcher = await createVerifiedUser(baseUrl, "manual-watcher@example.com");
+    const url = "https://www.instagram.com/p/MANUAL/";
+    const job = store.createExtractionJob(url, owner.user.id);
+    store.updateExtractionJob(job.id, {
+      status: "failed",
+      stage: "failed",
+      progress: 100,
+      errorMessage: "Extraction failed: nope",
+    });
+    store.addJobWatcher(job.id, watcher.user.id);
+
+    const manualRecipe = {
+      title: "Manual dish",
+      description: "",
+      category: "Dinner",
+      cuisine: "Italian",
+      prepTimeMinutes: 10,
+      basePortions: 2,
+      ingredients: [
+        { amount: 100, unit: "g", name: "flour", nutrition: { calories: 364, protein: 10, carbs: 76, fat: 1 } },
+      ],
+      instructions: ["Mix it."],
+      totals: null,
+    };
+
+    const response = await request(baseUrl, "/api/recipes/manual", {
+      method: "POST",
+      token: owner.token,
+      body: { jobId: job.id, recipe: manualRecipe },
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.ok(body.recipe.id);
+    assert.equal(body.job.recipeId, body.recipe.id);
+    assert.equal(store.getRecipeOwner(body.recipe.id), owner.user.id);
+    assert.ok(store.listFavorites(owner.user.id).includes(body.recipe.id));
+    assert.ok(store.listFavorites(watcher.user.id).includes(body.recipe.id));
+
+    const reimport = await request(baseUrl, "/api/recipes/import", {
+      method: "POST",
+      token: watcher.token,
+      body: { url },
+    });
+    assert.equal(reimport.status, 200);
+    const reimportBody = await reimport.json();
+    assert.equal(reimportBody.reason, "source");
+    assert.equal(reimportBody.recipe.id, body.recipe.id);
+    assert.equal(reimportBody.recipe.isFavorite, true);
+
+    const anonymous = await request(baseUrl, "/api/recipes/manual", {
+      method: "POST",
+      body: { jobId: job.id, recipe: manualRecipe },
+    });
+    assert.equal(anonymous.status, 401);
+  } finally {
+    await stopServer(server);
+    cleanup();
   }
 });
