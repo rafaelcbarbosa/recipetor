@@ -136,6 +136,24 @@ export function createHttpExtractor({
         }
       }
 
+      async function storeThumbnail(thumbnailId) {
+        if (!thumbnailId) return null;
+        try {
+          const thumbnail = await fetch(
+            endpointFor(baseUrl, `/thumbnails/${encodeURIComponent(thumbnailId)}.jpg`),
+            { signal: AbortSignal.timeout(30_000) },
+          );
+          if (!thumbnail.ok) return null;
+          const buffer = Buffer.from(await thumbnail.arrayBuffer());
+          if (buffer.length === 0) return null;
+          mkdirSync(mediaDir, { recursive: true });
+          writeFileSync(resolve(mediaDir, `${thumbnailId}.jpg`), buffer);
+          return `/media/${thumbnailId}.jpg`;
+        } catch {
+          return null;
+        }
+      }
+
       if (state.status === "done") {
         let recipe;
         try {
@@ -146,29 +164,16 @@ export function createHttpExtractor({
             : extractorError("The recipe extractor returned an invalid recipe.");
         }
 
-        if (state.thumbnail_id) {
-          try {
-            const thumbnail = await fetch(
-              endpointFor(baseUrl, `/thumbnails/${encodeURIComponent(state.thumbnail_id)}.jpg`),
-              { signal: AbortSignal.timeout(30_000) },
-            );
-            if (thumbnail.ok) {
-              const buffer = Buffer.from(await thumbnail.arrayBuffer());
-              if (buffer.length > 0) {
-                mkdirSync(mediaDir, { recursive: true });
-                writeFileSync(resolve(mediaDir, `${state.thumbnail_id}.jpg`), buffer);
-                recipe.imageUrl = `/media/${state.thumbnail_id}.jpg`;
-              }
-            }
-          } catch {
-            // A missing thumbnail should not fail an otherwise valid recipe.
-          }
-        }
+        const imageUrl = await storeThumbnail(state.thumbnail_id);
+        if (imageUrl) recipe.imageUrl = imageUrl;
         return recipe;
       }
 
       if (state.status === "error") {
-        throw friendlyError(state);
+        const error = friendlyError(state);
+        const thumbnailUrl = await storeThumbnail(state.thumbnail_id);
+        if (thumbnailUrl) error.thumbnailUrl = thumbnailUrl;
+        throw error;
       }
     }
   };

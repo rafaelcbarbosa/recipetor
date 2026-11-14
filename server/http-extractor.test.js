@@ -176,3 +176,58 @@ test("reports remote extractor availability", async () => {
 
   assert.equal(await isHttpExtractorAvailable({ baseUrl: "http://127.0.0.1:1", token: "secret" }), false);
 });
+
+test("keeps the thumbnail when a remote job fails", async () => {
+  const mediaDir = mkdtempSync(join(tmpdir(), "recipetor-http-fail-media-"));
+  const { server, baseUrl } = await startMock((request, response) => {
+    if (request.url === "/jobs" && request.method === "POST") {
+      request.resume();
+      request.on("end", () => sendJson(response, 202, { job_id: "job-fail" }));
+      return;
+    }
+    if (request.url === "/jobs/job-fail") {
+      return sendJson(response, 200, {
+        job_id: "job-fail",
+        status: "error",
+        stage: "failed",
+        progress: 100,
+        label: null,
+        recipe: null,
+        error: "It is only a teaser.",
+        error_code: "NO_RECIPE",
+        thumbnail_id: "fail-thumb",
+      });
+    }
+    if (request.url === "/thumbnails/fail-thumb.jpg") {
+      response.writeHead(200, { "Content-Type": "image/jpeg" });
+      response.end(Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+      return;
+    }
+    sendJson(response, 404, { detail: "not found" });
+  });
+
+  try {
+    const extract = createHttpExtractor({
+      baseUrl,
+      token: "secret",
+      mediaDir,
+      pollIntervalMs: 10,
+      timeoutMs: 5000,
+    });
+
+    let failure;
+    try {
+      await extract("https://www.instagram.com/p/FAIL/");
+    } catch (error) {
+      failure = error;
+    }
+
+    assert.ok(failure);
+    assert.match(failure.message, /No complete recipe found in this post/);
+    assert.equal(failure.thumbnailUrl, "/media/fail-thumb.jpg");
+    assert.ok(existsSync(join(mediaDir, "fail-thumb.jpg")));
+  } finally {
+    await new Promise((resolvePromise) => server.close(resolvePromise));
+    rmSync(mediaDir, { recursive: true, force: true });
+  }
+});

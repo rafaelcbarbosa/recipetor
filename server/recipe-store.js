@@ -431,6 +431,7 @@ export function createRecipeStore(
       stage TEXT,
       progress INTEGER DEFAULT 0,
       stage_label TEXT,
+      thumbnail_url TEXT,
       error_message TEXT,
       recipe_id TEXT REFERENCES recipes(id) ON DELETE SET NULL,
       created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
@@ -467,6 +468,10 @@ export function createRecipeStore(
   if (!jobColumns.has("started_at")) {
     db.exec("ALTER TABLE extraction_jobs ADD COLUMN started_at TEXT");
     console.log("Migration: added started_at column to extraction_jobs table");
+  }
+  if (!jobColumns.has("thumbnail_url")) {
+    db.exec("ALTER TABLE extraction_jobs ADD COLUMN thumbnail_url TEXT");
+    console.log("Migration: added thumbnail_url column to extraction_jobs table");
   }
 
   // Anonymous-friendly usage events for the telemetry dashboard.
@@ -810,6 +815,7 @@ export function createRecipeStore(
       stage: row.stage,
       progress: row.progress,
       stageLabel: row.stage_label ?? null,
+      thumbnailUrl: row.thumbnail_url ?? null,
       errorMessage: row.error_message,
       recipeId: row.recipe_id,
       createdBy: row.created_by,
@@ -828,6 +834,7 @@ export function createRecipeStore(
       stage: row.stage,
       progress: row.progress,
       stageLabel: row.stage_label ?? null,
+      thumbnailUrl: row.thumbnail_url ?? null,
       errorMessage: row.error_message,
       recipeId: row.recipe_id,
       createdBy: row.created_by,
@@ -846,6 +853,7 @@ export function createRecipeStore(
         status: row.status,
         stage: row.stage,
         progress: row.progress,
+        thumbnailUrl: row.thumbnail_url ?? null,
         errorMessage: row.error_message,
         recipeId: row.recipe_id,
         createdBy: row.created_by,
@@ -881,6 +889,7 @@ export function createRecipeStore(
         status: row.status,
         stage: row.stage,
         progress: row.progress,
+        thumbnailUrl: row.thumbnail_url ?? null,
         errorMessage: row.error_message,
         recipeId: row.recipe_id,
         createdBy: row.created_by,
@@ -899,6 +908,7 @@ export function createRecipeStore(
         status: row.status,
         stage: row.stage,
         progress: row.progress,
+        thumbnailUrl: row.thumbnail_url ?? null,
         errorMessage: row.error_message,
         recipeId: row.recipe_id,
         createdBy: row.created_by,
@@ -915,6 +925,7 @@ export function createRecipeStore(
     if (updates.progress !== undefined) { fields.push("progress = ?"); params.push(updates.progress); }
     if (updates.stageLabel !== undefined) { fields.push("stage_label = ?"); params.push(updates.stageLabel); }
     if (updates.startedAt !== undefined) { fields.push("started_at = ?"); params.push(updates.startedAt); }
+    if (updates.thumbnailUrl !== undefined) { fields.push("thumbnail_url = ?"); params.push(updates.thumbnailUrl); }
     if (updates.errorMessage !== undefined) { fields.push("error_message = ?"); params.push(updates.errorMessage); }
     if (updates.recipeId !== undefined) { fields.push("recipe_id = ?"); params.push(updates.recipeId); }
     if (fields.length === 0) return;
@@ -935,11 +946,13 @@ export function createRecipeStore(
     const isCreator = Boolean(userId && row.created_by === userId);
     return {
       id: row.id,
+      url: row.url,
       shortUrl: shortenUrl(row.url),
       status: row.status,
       stage: row.stage,
       progress: row.progress,
       stageLabel: row.stage_label ?? null,
+      thumbnailUrl: row.thumbnail_url ?? null,
       position: position ?? null,
       isMine: isCreator || watched,
       canRetry: !row.created_by || row.created_by === userId || watched,
@@ -1516,6 +1529,27 @@ export function createRecipeStore(
     }
   }
 
+  function registeredUsers() {
+    return db
+      .prepare(
+        `SELECT u.email, u.email_verified AS verified, u.created_at AS createdAt,
+                MAX(e.created_at) AS lastSeen, COUNT(e.id) AS events
+         FROM users u
+         LEFT JOIN app_events e ON e.user_id = u.id
+         GROUP BY u.id
+         ORDER BY u.created_at DESC`,
+      )
+      .all()
+      .map((row) => ({ ...row, verified: Boolean(row.verified) }));
+  }
+
+  function clearFinishedExtractionJobs() {
+    const result = db
+      .prepare("DELETE FROM extraction_jobs WHERE status IN ('completed', 'failed')")
+      .run();
+    return result.changes;
+  }
+
   function recordEvent(userId, event, recipeId = null) {
     try {
       insertEventStmt.run(randomUUID(), userId ?? null, event, recipeId ?? null, new Date().toISOString());
@@ -1601,6 +1635,7 @@ export function createRecipeStore(
            GROUP BY e.user_id ORDER BY events DESC LIMIT 10`,
         )
         .all(),
+      registered: registeredUsers(),
     };
 
     const access = {
@@ -1693,6 +1728,8 @@ export function createRecipeStore(
     listRecoverableExtractionJobs,
     updateExtractionJob,
     recordEvent,
+    registeredUsers,
+    clearFinishedExtractionJobs,
     telemetryData,
     // Favorites
     listFavorites,

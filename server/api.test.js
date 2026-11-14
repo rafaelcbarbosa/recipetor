@@ -406,7 +406,7 @@ test("ratings require auth, aggregate averages, and decorate recipes per user", 
   }
 });
 
-test("public queue hides urls and creators while reporting positions", async () => {
+test("public queue reports positions and hides creators", async () => {
   const { store, cleanup } = createTestStore();
   const { server, baseUrl } = await startServer(store);
 
@@ -422,7 +422,8 @@ test("public queue hides urls and creators while reporting positions", async () 
     const anonymousQueue = await (await request(baseUrl, "/api/recipes/import/queue")).json();
     assert.equal(anonymousQueue.jobs.length, 3);
     for (const job of anonymousQueue.jobs) {
-      assert.equal("url" in job, false);
+      assert.equal(typeof job.url, "string");
+      assert.match(job.url, /instagram\.com/);
       assert.equal("createdBy" in job, false);
       assert.equal(job.isMine, false);
       assert.match(job.shortUrl, /instagram\.com/);
@@ -448,7 +449,7 @@ test("public queue hides urls and creators while reporting positions", async () 
     const status = await (
       await request(baseUrl, `/api/recipes/import/status/${secondJob.id}`, { token: first.token })
     ).json();
-    assert.equal("url" in status.job, false);
+    assert.equal(typeof status.job.url, "string");
     assert.equal(status.job.position, 2);
     assert.equal(status.job.isMine, false);
 
@@ -972,6 +973,8 @@ test("serves the telemetry page and data only to the admin account", async () =>
     assert.ok(Array.isArray(body.recipes.byCategory));
     assert.ok(Array.isArray(body.users.top));
     assert.ok(Array.isArray(body.access.latest));
+    assert.ok(Array.isArray(body.users.registered));
+    assert.ok(body.users.registered.some((user) => user.email === "coxinha@gmail.com"));
     assert.equal(body.eventRetentionDays, 90);
   } finally {
     await stopServer(server);
@@ -1037,6 +1040,83 @@ test("reports average extraction time from completed jobs", async () => {
     assert.equal(body.extraction.completed, 1);
     assert.ok(body.extraction.averageMs >= 9000 && body.extraction.averageMs <= 12000);
     assert.ok(body.extraction.recent[0].durationMs >= 9000);
+  } finally {
+    await stopServer(server);
+    cleanup();
+  }
+});
+
+test("admin can clear finished queue history without deleting recipes", async () => {
+  const { store, cleanup } = createTestStore();
+  const { server, baseUrl } = await startServer(store);
+
+  try {
+    const user = await createVerifiedUser(baseUrl, "clear-user@example.com");
+    const admin = await createVerifiedUser(baseUrl, "coxinha@gmail.com");
+    const saved = store.saveImported("https://www.instagram.com/p/CLEAR/", recipe);
+
+    const active = store.createExtractionJob("https://www.instagram.com/p/ACTIVE-CLEAR/", user.user.id);
+    const completed = store.createExtractionJob("https://www.instagram.com/p/DONE-CLEAR/", user.user.id);
+    store.updateExtractionJob(completed.id, {
+      status: "completed",
+      stage: "completed",
+      progress: 100,
+      recipeId: saved.recipe.id,
+    });
+    const failed = store.createExtractionJob("https://www.instagram.com/p/FAIL-CLEAR/", user.user.id);
+    store.updateExtractionJob(failed.id, { status: "failed", stage: "failed", progress: 100 });
+
+    const forbidden = await request(baseUrl, "/api/telemetry/clear-queue", {
+      method: "POST",
+      token: user.token,
+    });
+    assert.equal(forbidden.status, 401);
+
+    const response = await request(baseUrl, "/api/telemetry/clear-queue", {
+      method: "POST",
+      token: admin.token,
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { removed: 2 });
+
+    assert.ok(store.getExtractionJob(active.id));
+    assert.equal(store.getExtractionJob(completed.id), null);
+    assert.equal(store.getExtractionJob(failed.id), null);
+    assert.ok(store.getRecipe(saved.recipe.id));
+  } finally {
+    await stopServer(server);
+    cleanup();
+  }
+});
+
+test("keeps the screenshot on a failed extraction", async () => {
+  const { store, cleanup } = createTestStore();
+  const failure = new Error("No complete recipe found in this post.");
+  failure.thumbnailUrl = "/media/failed-thumb.jpg";
+  const { server, baseUrl } = await startServer(store, {
+    extractRecipe: async () => {
+      throw failure;
+    },
+  });
+
+  try {
+    const user = await createVerifiedUser(baseUrl, "failed-thumb@example.com");
+    const response = await request(baseUrl, "/api/recipes/import", {
+      method: "POST",
+      token: user.token,
+      body: { url: "https://www.instagram.com/p/FAIL-THUMB/" },
+    });
+    assert.equal(response.status, 202);
+    const job = (await response.json()).job;
+
+    await waitForJobs(store, 1);
+    const finished = store.getExtractionJob(job.id);
+    assert.equal(finished.status, "failed");
+    assert.equal(finished.thumbnailUrl, "/media/failed-thumb.jpg");
+
+    const publicJob = store.getPublicExtractionJob(job.id, user.user.id);
+    assert.equal(publicJob.thumbnailUrl, "/media/failed-thumb.jpg");
+    assert.equal(publicJob.url, "https://www.instagram.com/p/FAIL-THUMB/");
   } finally {
     await stopServer(server);
     cleanup();

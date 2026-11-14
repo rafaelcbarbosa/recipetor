@@ -136,9 +136,14 @@ select:focus-visible {
   width: 32px;
   height: 32px;
   flex: none;
+  overflow: hidden;
   border-radius: 9px;
-  background: var(--tomato);
-  color: #fff;
+}
+
+.brand-icon img {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .brand h1 {
@@ -1652,4 +1657,63 @@ button.queue-row {
 .signin-gate .primary-btn,
 .signin-gate .secondary-btn {
   width: 100%;
+}
+
+/* Failed queue rows */
+.queue-lead {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex: none;
+}
+
+.queue-thumb {
+  display: block;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  object-fit: cover;
+}
+
+.queue-link {
+  color: var(--tomato-action);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.failure-row + .failure-row::before {
+  left: 72px;
+}
+
+/* Manual-entry source preview */
+.manual-source {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border-radius: 16px;
+  background: var(--canvas);
+}
+
+.manual-thumb {
+  display: block;
+  width: 56px;
+  height: 56px;
+  flex: none;
+  border-radius: 12px;
+  object-fit: cover;
+}
+
+.manual-link {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--tomato-action);
+  font-size: 15px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

@@ -52,10 +52,12 @@ type HistoryEntry = Recipe & { action: string; createdAt: string };
 
 type QueueJob = {
   id: string;
+  url?: string;
   shortUrl: string;
   status: string;
   stage: string | null;
   stageLabel?: string | null;
+  thumbnailUrl?: string | null;
   progress: number;
   position: number | null;
   isMine: boolean;
@@ -292,7 +294,7 @@ function TopBar({
     <header className="topbar">
       <div className="brand">
         <span className="brand-icon">
-          <Icon name="soup" size={20} />
+          <img src="/favicon.svg" alt="" />
         </span>
         <h1>Recipetor</h1>
       </div>
@@ -435,7 +437,11 @@ function App() {
   const [isSavingIngredient, setIsSavingIngredient] = useState(false);
 
   const [failureDialog, setFailureDialog] = useState<FailureDialogState | null>(null);
-  const [manualSheet, setManualSheet] = useState<{ jobId: string } | null>(null);
+  const [manualSheet, setManualSheet] = useState<{
+    jobId: string;
+    url: string;
+    thumbnailUrl: string | null;
+  } | null>(null);
   const [manualTitle, setManualTitle] = useState("");
   const [manualCategory, setManualCategory] = useState("Dinner");
   const [manualCuisine, setManualCuisine] = useState("");
@@ -1001,7 +1007,11 @@ function App() {
       return;
     }
     setNotice("");
-    setManualSheet({ jobId: job.id });
+    setManualSheet({
+      jobId: job.id,
+      url: job.url ?? "",
+      thumbnailUrl: job.thumbnailUrl ?? null,
+    });
     setManualTitle("");
     setManualCategory("Dinner");
     setManualCuisine("");
@@ -1788,11 +1798,28 @@ function App() {
           <h2 className="group-head">Couldn’t be extracted</h2>
           <div className="group">
             {failedJobs.map((job) => (
-              <div className="queue-row" key={job.id}>
-                <Icon name="alert-circle" className="queue-failed" />
+              <div className="queue-row failure-row" key={job.id}>
+                <span className="queue-lead">
+                  {job.thumbnailUrl ? (
+                    <img className="queue-thumb" src={job.thumbnailUrl} alt="" loading="lazy" />
+                  ) : (
+                    <Icon name="alert-circle" className="queue-failed" />
+                  )}
+                </span>
                 <span className="queue-row-text">
                   <span className="queue-row-title">
-                    <span className="queue-url-text">{job.shortUrl}</span>
+                    {job.url ? (
+                      <a
+                        className="queue-url-text queue-link"
+                        href={job.url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {job.shortUrl}
+                      </a>
+                    ) : (
+                      <span className="queue-url-text">{job.shortUrl}</span>
+                    )}
                     {job.isMine && <span className="you-chip">You</span>}
                   </span>
                   <span className="queue-row-sub">Couldn’t read this post</span>
@@ -2319,6 +2346,18 @@ function App() {
               </button>
             </div>
             <p className="sheet-hint">The link will be attached, so future submissions open this recipe.</p>
+            {(manualSheet.thumbnailUrl || manualSheet.url) && (
+              <div className="manual-source">
+                {manualSheet.thumbnailUrl && (
+                  <img className="manual-thumb" src={manualSheet.thumbnailUrl} alt="" />
+                )}
+                {manualSheet.url && (
+                  <a className="manual-link" href={manualSheet.url} target="_blank" rel="noreferrer">
+                    {shortenUrl(manualSheet.url)}
+                  </a>
+                )}
+              </div>
+            )}
             <div className="auth-form">
               <div className="field">
                 <label htmlFor="manual-title-input">Title</label>

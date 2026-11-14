@@ -4,6 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
     <title>Recipetor · Telemetry</title>
     <style>
       :root {
@@ -28,6 +30,11 @@
       button { cursor: pointer; }
       .wrap { max-width: 1120px; margin: 0 auto; padding: 28px 20px 60px; }
       .top { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+      .brand-head { display: flex; align-items: center; gap: 12px; }
+      .logo { width: 40px; height: 40px; border-radius: 10px; display: block; }
+      .card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+      .card-head h2 { margin: 0; }
+      .danger-btn { border: 0; border-radius: 22px; min-height: 44px; padding: 0 16px; background: var(--canvas); color: var(--tomato-action); font-size: 14px; font-weight: 600; }
       h1 { margin: 0; font-size: 26px; letter-spacing: -0.02em; }
       .sub { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
       h2 { margin: 0 0 12px; font-size: 17px; }
@@ -68,9 +75,12 @@
   <body>
     <main class="wrap">
       <header class="top">
-        <div>
-          <h1>Recipetor telemetry</h1>
-          <p class="sub" id="status-line">Admin only · not part of the main app</p>
+        <div class="brand-head">
+          <img class="logo" src="/favicon.svg" alt="" />
+          <div>
+            <h1>Recipetor telemetry</h1>
+            <p class="sub" id="status-line">Admin only · not part of the main app</p>
+          </div>
         </div>
         <button id="logout" hidden>Sign out</button>
       </header>
@@ -108,6 +118,10 @@
             <div id="top-recipes"></div>
           </div>
         </div>
+        <div class="card">
+          <h2>Registered users</h2>
+          <div id="registered-users"></div>
+        </div>
         <div class="split">
           <div class="card">
             <h2>Latest recipes added</h2>
@@ -119,7 +133,10 @@
           </div>
         </div>
         <div class="card">
-          <h2>Recent extractions</h2>
+          <div class="card-head">
+            <h2>Recent extractions</h2>
+            <button id="clear-queue" class="danger-btn">Clear queue history</button>
+          </div>
           <div id="recent-extractions"></div>
         </div>
       </section>
@@ -233,6 +250,13 @@
           "No user activity yet.",
         );
 
+        $("registered-users").innerHTML = table(
+          [["Email"], ["Verified"], ["Registered", "right"], ["Last seen", "right"]],
+          data.users.registered,
+          (row) => `<tr><td>${escapeHtml(row.email)}</td><td><span class="pill">${row.verified ? "Yes" : "No"}</span></td><td class="right muted">${escapeHtml(formatDate(row.createdAt))}</td><td class="right muted">${escapeHtml(formatDate(row.lastSeen))}</td></tr>`,
+          "No users registered yet.",
+        );
+
         $("top-recipes").innerHTML = table(
           [["Recipe"], ["Views", "right"]],
           data.access.topViewed,
@@ -301,6 +325,26 @@
           await load();
         } catch {
           $("login-error").textContent = "Could not reach the server.";
+        }
+      });
+
+      $("clear-queue").addEventListener("click", async () => {
+        if (!confirm("Delete completed and failed queue history? Imported recipes are kept.")) return;
+        const token = localStorage.getItem(TOKEN_KEY);
+        try {
+          const response = await fetch("/api/telemetry/clear-queue", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!response.ok) {
+            alert("Could not clear the queue history.");
+            return;
+          }
+          const body = await response.json();
+          $("status-line").textContent = `Cleared ${body.removed} queue job(s)`;
+          await load();
+        } catch {
+          alert("Could not reach the server.");
         }
       });
 

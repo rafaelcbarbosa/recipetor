@@ -322,6 +322,10 @@ export function createServer({
           });
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : "Unknown extraction error";
+          const thumbnailUrl =
+            error && typeof error === "object" && typeof error.thumbnailUrl === "string"
+              ? error.thumbnailUrl
+              : null;
           console.error(`[queue] Job ${jobId}: Extraction failed:`, errorMsg);
           store.updateExtractionJob(jobId, {
             status: "failed",
@@ -329,6 +333,7 @@ export function createServer({
             progress: 100,
             stageLabel: null,
             errorMessage: `Extraction failed: ${errorMsg}`,
+            ...(thumbnailUrl ? { thumbnailUrl } : {}),
           });
           continue;
         }
@@ -833,6 +838,14 @@ export function createServer({
           extractorAvailable: await extractorAvailable(),
         },
       });
+    }
+    if (pathname === "/api/telemetry/clear-queue" && request.method === "POST") {
+      checkSameOrigin(request);
+      if (!isAdminRequest(request)) {
+        return jsonResponse(response, 401, { error: "Admin authentication required." });
+      }
+      const removed = store.clearFinishedExtractionJobs();
+      return jsonResponse(response, 200, { removed });
     }
     if (pathname === "/api/events/app-open" && request.method === "POST") {
       checkSameOrigin(request);

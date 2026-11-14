@@ -209,7 +209,14 @@ export function createScriptExtractor({
 
         const payload = parseStdout(stdout);
         if (payload && typeof payload === "object" && !Array.isArray(payload) && "error" in payload) {
-          rejectPromise(friendlyError(payload, stderrTail.trim().split("\n").slice(-1)[0]));
+          const error = friendlyError(payload, stderrTail.trim().split("\n").slice(-1)[0]);
+          const candidate = thumbnailPath && existsSync(thumbnailPath) ? thumbnailPath : expectedThumbnail;
+          if (existsSync(candidate) && statSync(candidate).isFile() && statSync(candidate).size > 0) {
+            const destination = resolve(mediaDir, basename(candidate));
+            if (resolve(candidate) !== destination) copyFileSync(candidate, destination);
+            error.thumbnailUrl = `/media/${basename(destination)}`;
+          }
+          rejectPromise(error);
           return;
         }
         if (code !== 0 || !payload) {

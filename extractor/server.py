@@ -129,6 +129,14 @@ def _progress_for(index: int, total: int) -> int:
     return max(5, min(95, round(index / total * 100)))
 
 
+def _thumbnail_id(thumbnail_path: str | None, url: str) -> str | None:
+    if thumbnail_path and Path(thumbnail_path).is_file():
+        return Path(thumbnail_path).stem
+    key = hashlib.sha256(f"{url}|{THUMB_WIDTH}".encode("utf-8")).hexdigest()[:32]
+    expected = MEDIA_DIR / f"{key}.jpg"
+    return expected.stem if expected.is_file() else None
+
+
 def _extract_command(url: str, compute_nutrition: bool) -> list[str]:
     cmd = [
         sys.executable,
@@ -217,6 +225,7 @@ def _run_job(job_id: str, url: str, compute_nutrition: bool) -> None:
                 label=None,
                 error="The recipe extractor timed out.",
                 error_code="TIMEOUT",
+                thumbnail_id=_thumbnail_id(thumbnail_path, url),
             )
             return
 
@@ -235,7 +244,16 @@ def _run_job(job_id: str, url: str, compute_nutrition: bool) -> None:
 
         if not isinstance(payload, dict):
             tail = stderr_lines[-1] if stderr_lines else "The recipe extractor returned an invalid response."
-            _set_job(job_id, status="error", stage="failed", progress=100, label=None, error=tail, error_code="INVALID_RESPONSE")
+            _set_job(
+                job_id,
+                status="error",
+                stage="failed",
+                progress=100,
+                label=None,
+                error=tail,
+                error_code="INVALID_RESPONSE",
+                thumbnail_id=_thumbnail_id(thumbnail_path, url),
+            )
             return
 
         if "error" in payload:
@@ -247,17 +265,11 @@ def _run_job(job_id: str, url: str, compute_nutrition: bool) -> None:
                 label=None,
                 error=str(payload.get("message") or "The recipe extractor failed.")[:500],
                 error_code=str(payload.get("error") or "EXTRACTION_FAILED"),
+                thumbnail_id=_thumbnail_id(thumbnail_path, url),
             )
             return
 
-        thumb_id = None
-        if thumbnail_path and Path(thumbnail_path).is_file():
-            thumb_id = Path(thumbnail_path).stem
-        else:
-            key = hashlib.sha256(f"{url}|{THUMB_WIDTH}".encode("utf-8")).hexdigest()[:32]
-            expected = MEDIA_DIR / f"{key}.jpg"
-            if expected.is_file():
-                thumb_id = expected.stem
+        thumb_id = _thumbnail_id(thumbnail_path, url)
 
         _set_job(
             job_id,
