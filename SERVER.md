@@ -182,6 +182,7 @@ local to that host.
 - Failures stay in the queue for 24h, one row per link, then disappear. A failure row disappears immediately once its link has a recipe.
 - Completed jobs are never shown in the queue. The Library updates automatically and a toast announces the new recipe.
 - Failed rows offer manual entry to the creator/watchers. A manual recipe attaches the failed link as a source and is favorited/historied for the entrant and all watchers.
+- Failed extractions keep the post screenshot when the extractor captured one. The queue exposes the full post link and the screenshot so the user can identify the post.
 - Deletion: the admin can delete any recipe; the original loader can delete their own.
 
 Relevant API routes:
@@ -196,6 +197,7 @@ Relevant API routes:
 | `POST` | `/api/events/app-open` | Usage event: app opened |
 | `POST` | `/api/events/recipe-view` | Usage event: recipe detail opened |
 | `GET` | `/api/telemetry` | Admin-only telemetry data |
+| `POST` | `/api/telemetry/clear-queue` | Admin-only: delete completed/failed queue history (recipes kept) |
 
 ## Queue progress
 
@@ -222,6 +224,10 @@ app. Sign in with the Recipetor admin account (the same email/password as the
 main app). Data comes from the admin-only `GET /api/telemetry` endpoint and
 includes app status, user activity, recipe views, latest recipes, category and
 cuisine counts, extraction timings, and recent accesses.
+
+The dashboard includes the full list of registered users, and a
+**Clear queue history** button on the Recent extractions card that deletes
+completed and failed jobs only (imported recipes are kept).
 
 Usage events (`app_open`, `recipe_view`, `favorite`, `rating`, `import`,
 `manual_entry`) are retained for 90 days and pruned on startup. Signed-out

@@ -57,7 +57,7 @@ No large (34 px) page titles. Each screen is titled by its top bar or a visual b
 
 24 px viewBox, stroke 1.8, round caps and joins, no fill, except the favorited heart and filled stars (fill `tomato`). Lucide equivalents are fine: chevron-left, chevron-right, chevrons-up-down, search, user, heart, star, share, clock, list, circle-check, circle-alert, loader, circle-plus, book-open, soup. Decorative icons get `aria-hidden="true"`; icon-only buttons get `aria-label`.
 
-App icon: 32 px rounded square, `tomato` fill, white bowl-with-steam glyph (20 px).
+App icon: 32 px rounded square using the smiley-burrito asset (`/favicon.svg`). The same favicon is used for the browser tab, apple-touch icon, telemetry page and PWA manifest. Do not use the old bowl glyph for the brand.
 
 ## 2. Screens
 
@@ -118,7 +118,7 @@ Pushed screen from the top-bar backlog icon. 16 px padding, 12 px gaps, 34 px bo
    - Subtitle (14, muted): the live step label + " · position N", or "Waiting · position N".
    - Show no names or user data, only shortened links.
 5. **Couldn't be extracted:** group header, then a white group containing failures from the last 24 hours, one row per link:
-   - Failed row: `tomato` exclamation icon (24), shortened URL (17/600), "Couldn't read this post" (14, muted), "You" chip for the creator/watchers, and a trailing **Enter manually** text button (height 44, 15/600, `tomato-action`) for the creator/watchers.
+   - Failed row: post screenshot (44 px, radius 12, `object-fit: cover`) when the extractor captured one — even if no recipe was identified — otherwise a `tomato` exclamation icon (24). The shortened URL is a clickable link to the original post (17/600, `tomato-action`, underlined); "You" chip for the creator/watchers; "Couldn't read this post" (14, muted); and a trailing **Enter manually** text button (height 44, 15/600, `tomato-action`) for the creator/watchers.
    - Completed jobs are never shown in the queue. Their recipes live in the Library; a "Recipe ready: <title>" toast announces completion.
    - Once a link has a recipe (manual entry or a successful retry), its failure row disappears immediately.
 6. **Data refresh:** poll every 2 seconds. Failed jobs are hidden after 24 hours.
@@ -128,7 +128,7 @@ Pushed screen from the top-bar backlog icon. 16 px padding, 12 px gaps, 34 px bo
 Opened from **Enter manually** on a failed row. Bottom sheet (radius 20, padding 20, scrollable):
 
 1. Title "Add recipe manually" + close (44).
-2. Hint: "The link will be attached, so future submissions open this recipe."
+2. Hint: "The link will be attached, so future submissions open this recipe." Below it, a source preview: the post screenshot (56 px, radius 12) and a clickable underlined link to the original post, so the user knows which recipe they are entering.
 3. Fields: Title (required, 150), Category (select: Breakfast, Lunch, Dinner, Dessert, Snack, Other), Cuisine (optional, 50), Servings (1-1000), Prep minutes (1-1440), Description (optional, 500).
 4. Ingredients: repeatable cards. Top row: amount (56), unit select (76; known units), name (flex), remove (44). Second row: optional kcal. "Add ingredient" text button (44).
 5. Steps: textarea, one step per line.
@@ -167,7 +167,9 @@ When signed in, Favorites uses the normal Library search/filters/list filtered t
 
 A separate web page at `/telemetry` — not part of the phone app, not linked from it, and marked `noindex`. It signs in with the **admin Recipetor account** (same email/password); non-admin sessions are rejected.
 
-Sections: app/extractor status, uptime, version; recipe totals, by category, by cuisine, latest added; users total/active 7d/30d and top users; latest accesses and most-viewed recipes; completed/failed extractions with average/min/max time and recent jobs; favorites and ratings; queue depth and 24h failures; database size and event retention.
+Sections: app/extractor status, uptime, version; recipe totals, by category, by cuisine, latest added; users total/active 7d/30d, top users, and a full **Registered users** table (email, verified, registered date, last seen); latest accesses and most-viewed recipes; completed/failed extractions with average/min/max time and recent jobs; favorites and ratings; queue depth and 24h failures; database size and event retention.
+
+A **Clear queue history** button on the Recent extractions card deletes completed and failed jobs only. Imported recipes are never deleted.
 
 Usage events are retained **90 days**. Signed-out activity is anonymous; signed-in activity stores the user so the admin can see top users and latest accesses.
 
@@ -187,7 +189,7 @@ Usage events are retained **90 days**. Signed-out activity is anonymous; signed-
 - **Recipe:** id, title, image_url (nullable), cuisine, meal_types[], diet_tags[], custom_tags[], prep_time_minutes, base_servings, ingredients[{name, amount, unit, kcal}], steps[], nutrition_per_portion {kcal, protein_g, carbs_g, fat_g}, rating_avg, rating_count, source_posts[], can_delete.
 - **Ingredient editing:** each line accepts a unit change among compatible units (weight/volume) and a persisted amount/unit when either is missing. Missing calories are inferred from other recipes at save time.
 - **Per user:** is_favorite, my_rating (1 to 5 or none).
-- **Queue job:** id, url, status (pending, processing, completed, failed), stage, stage_label (live extractor step), progress, position, is_mine (creator or watcher), can_retry, recipe_id, error, started_at, updated_at.
+- **Queue job:** id, url (full post link), thumbnail_url (post screenshot, kept on failures too), status (pending, processing, completed, failed), stage, stage_label (live extractor step), progress, position, is_mine (creator or watcher), can_retry, recipe_id, error, started_at, updated_at.
 - **Watchers:** job_id, user_id. The creator is always a watcher; watchers receive the same queue rights and completion favorite/history as the creator.
 - **Usage events:** id, user_id (nullable for signed-out activity), event (`app_open`, `recipe_view`, `favorite`, `rating`, `import`, `manual_entry`), recipe_id, created_at. Retained 90 days.
 - **Telemetry:** aggregates over events, jobs, recipes, users, favorites and ratings. Admin-only; includes emails for signed-in activity.
