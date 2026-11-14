@@ -448,6 +448,12 @@ export function createRecipeStore(
     CREATE INDEX IF NOT EXISTS job_watchers_user_id_idx ON job_watchers(user_id);
   `);
 
+  // Older jobs predate the watcher table; make their creators watchers too.
+  db.prepare(`
+    INSERT OR IGNORE INTO job_watchers (job_id, user_id, created_at)
+    SELECT id, created_by, created_at FROM extraction_jobs WHERE created_by IS NOT NULL
+  `).run();
+
   const jobColumns = new Set(
     db.prepare("PRAGMA table_info(extraction_jobs)").all().map((column) => column.name),
   );
