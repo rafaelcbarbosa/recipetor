@@ -5,7 +5,7 @@ Recipetor runs a Node app and uses a vendored Python extractor:
 ```
 Browser -> Recipetor app (Node/SQLite) -> extractor/recipe_extract.py
           -> yt-dlp (video) / gallery-dl (photos) -> ffmpeg
-          -> faster-whisper -> tesseract -> LLM (vision for photos)
+          -> faster-whisper -> tesseract -> LLM (vision for photos/video frames)
 ```
 
 The Node app owns auth, the import queue, deduplication, favorites/history,
@@ -16,9 +16,12 @@ strict recipe JSON, validates it, and writes a 480 px JPEG thumbnail.
 Video posts use `yt-dlp`. Photo posts and carousels use `gallery-dl` with a
 logged-in Instagram `cookies.txt` (`RECIPE_IG_COOKIES`); without cookies
 Instagram redirects image requests to its login page. Photo posts are also sent
-to a multimodal model (`RECIPE_VISION_MODEL`, default `gemini-4-argon`) so
-recipe cards and ingredient screenshots can be read from the images. If the
-vision request is rejected, the extractor retries text-only automatically.
+to a free multimodal model (`RECIPE_VISION_MODEL`, default
+`deepseek-v4.1-flash-free` on `RECIPE_VISION_BASE_URL`, default
+`https://opencode.ai/zen/v1`) so recipe cards, ingredient screenshots, and
+sampled video frames can be read from the images. The text model stays on
+`RECIPE_BASE_URL` (`beam-free` by default). If the vision request is rejected or
+the free quota is exhausted, the extractor retries text-only automatically.
 
 The extractor can run in two modes:
 
@@ -74,6 +77,8 @@ RECIPE_API_KEY=<opencode-go key> \
 RECIPE_WHISPER_MODEL=medium \
 RECIPE_LANGUAGE=auto \
 RECIPE_COMPUTE_NUTRITION=1 \
+RECIPE_VISION_MODEL=deepseek-v4.1-flash-free \
+RECIPE_VISION_BASE_URL=https://opencode.ai/zen/v1 \
 RECIPE_IG_COOKIES=$HOME/.config/recipetor-secrets/instagram-cookies.txt \
 .venv/bin/uvicorn server:app --host 127.0.0.1 --port 8099 --workers 1
 ```

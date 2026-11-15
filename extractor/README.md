@@ -6,9 +6,10 @@ for a strict recipe JSON, validates it, and writes a 480 px thumbnail.
 
 Video posts are downloaded with `yt-dlp`. Photo posts and carousels are downloaded
 with `gallery-dl`, which needs Instagram cookies from a logged-in browser
-(`RECIPE_IG_COOKIES`). Image posts are also sent to a multimodal LLM
-(`RECIPE_VISION_MODEL`, default `gemini-4-argon`) so recipe cards and ingredient
-screenshots can be read directly.
+(`RECIPE_IG_COOKIES`). Photos, carousel slides, and frames sampled from videos
+are also sent to a multimodal LLM (`RECIPE_VISION_MODEL`, default
+`deepseek-v4.1-flash-free`) so recipe cards, ingredient screenshots, and
+visibly demonstrated steps can be read directly.
 
 Setup:
 
@@ -46,8 +47,9 @@ Extractor-only environment variables (passed through by both modes):
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `RECIPE_IG_COOKIES` | unset | Netscape `cookies.txt` from a logged-in Instagram browser. Required for photo posts/carousels. Keep it in a `0700` directory with mode `0600`; the extractor uses a private copy so downloaders cannot rewrite it. |
-| `RECIPE_VISION` | `1` | Send post images to the vision model (`0` disables). |
-| `RECIPE_VISION_MODEL` | `gemini-4-argon` | Multimodal model used only when images are attached. Falls back to the text model without images if the vision request fails. |
+| `RECIPE_VISION` | `1` | Send post images and video frames to the vision model (`0` disables). |
+| `RECIPE_VISION_MODEL` | `deepseek-v4.1-flash-free` | Free multimodal model used only when images/video frames are attached. Falls back to the text model without images if vision is rejected or its free quota is exhausted. |
+| `RECIPE_VISION_BASE_URL` | `https://opencode.ai/zen/v1` | Base URL for the free vision model (the text model stays on `zen/go`). |
 
 ## HTTP job service
 
