@@ -53,6 +53,8 @@ type HistoryEntry = Recipe & { action: string; createdAt: string };
 type QueueJob = {
   id: string;
   url?: string;
+  kind?: "text" | "link";
+  textPreview?: string | null;
   shortUrl: string;
   status: string;
   stage: string | null;
@@ -73,6 +75,7 @@ type ImportJob = {
   id: string;
   status: string;
   stage: string;
+  kind?: "text" | "link";
   stageLabel?: string | null;
   progress: number;
   error?: string | null;
@@ -87,7 +90,7 @@ type DetailOrigin = "library" | "favorites" | "queue" | "history";
 type AddMode = "link" | "text";
 type IngredientSheetMode = "unit" | "quantity";
 type IngredientSheetState = { index: number; mode: IngredientSheetMode };
-type FailureDialogState = { jobId: string; message: string; url: string };
+type FailureDialogState = { jobId: string; message: string; url?: string; title?: string };
 type ManualIngredient = { amount: string; unit: string; name: string; kcal: string };
 type ServerState = "checking" | "ready" | "extractor-missing" | "offline";
 
@@ -96,7 +99,6 @@ const MANUAL_CATEGORIES = ["Breakfast", "Lunch", "Dinner", "Dessert", "Snack", "
 const DIET_OPTIONS = ["Vegan", "Vegetarian", "Gluten-free", "Low-carb", "Dairy-free", "Pescatarian", "High-protein"];
 const STAGE_LABELS = ["Queued", "Fetching", "Extracting", "Saving"];
 const REQUEST_TIMEOUT_MS = 20_000;
-const NORMALIZE_TIMEOUT_MS = 180_000;
 const RECIPE_TEXT_MAX_CHARS = 12_000;
 const QUEUE_POLL_MS = 2000;
 const QUEUE_POLL_MAX_MS = 15_000;
@@ -155,20 +157,22 @@ function jobStageIndex(job: Pick<QueueJob, "status" | "stage">) {
 }
 
 function jobStatusLine(job: QueueJob) {
+  const textJob = job.kind === "text";
   if (job.stageLabel) return job.stageLabel;
   if (job.status === "pending") return "Waiting for your turn";
-  if (job.stage === "fetching") return "Fetching from Instagram";
+  if (job.stage === "fetching") return textJob ? "Preparing text" : "Fetching from Instagram";
   if (job.stage === "saving") return "Saving recipe";
-  return "Extracting recipe";
+  return textJob ? "Normalizing recipe" : "Extracting recipe";
 }
 
 function jobRowSubtitle(job: QueueJob) {
+  const textJob = job.kind === "text";
   const position = job.position ? ` · position ${job.position}` : "";
   if (job.stageLabel) return `${job.stageLabel}${position}`;
   if (job.status === "pending") return `Waiting${position}`;
-  if (job.stage === "fetching") return `Fetching recipe${position}`;
+  if (job.stage === "fetching") return `${textJob ? "Preparing text" : "Fetching recipe"}${position}`;
   if (job.stage === "saving") return `Saving recipe${position}`;
-  return `Extracting recipe${position}`;
+  return `${textJob ? "Normalizing recipe" : "Extracting recipe"}${position}`;
 }
 
 function importStageLabel(stage: string) {
@@ -469,10 +473,7 @@ function App() {
 
   const [addMode, setAddMode] = useState<AddMode>("link");
   const [recipeText, setRecipeText] = useState("");
-  const [isNormalizing, setIsNormalizing] = useState(false);
-  const [normalizeElapsed, setNormalizeElapsed] = useState(0);
-  const [textPreview, setTextPreview] = useState<Recipe | null>(null);
-  const [isSavingText, setIsSavingText] = useState(false);
+  const [isSubmittingText, setIsSubmittingText] = useState(false);
 
   const handledCompletions = useRef<Set<string>>(new Set());
   const knownRecipes = useRef<Map<string, Recipe>>(new Map());
@@ -534,15 +535,6 @@ function App() {
     const timer = window.setTimeout(() => setNotice(""), 4200);
     return () => window.clearTimeout(timer);
   }, [notice]);
-
-  useEffect(() => {
-    if (!isNormalizing) return;
-    setNormalizeElapsed(0);
-    const timer = window.setInterval(() => {
-      setNormalizeElapsed((current) => current + 1);
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [isNormalizing]);
 
   const checkServer = useCallback(async () => {
     try {
@@ -747,8 +739,7 @@ function App() {
       showTagSheet ||
       ingredientSheet ||
       failureDialog ||
-      manualSheet ||
-      textPreview,
+      manualSheet,
   );
   useEffect(() => {
     if (!overlayOpen) return;
@@ -763,7 +754,6 @@ function App() {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       if (manualSheet) setManualSheet(null);
-      else if (textPreview) setTextPreview(null);
       else if (failureDialog) setFailureDialog(null);
       else if (ingredientSheet) setIngredientSheet(null);
       else if (showTagSheet) setShowTagSheet(false);
@@ -1224,7 +1214,7 @@ function App() {
     setNotice("");
   }
 
-  async function handleNormalizeText(event: FormEvent<HTMLFormElement>) {
+  async function handleTextSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!user) {
       setAuthMode("login");
@@ -1235,57 +1225,56 @@ function App() {
       setNotice("Paste a recipe first.");
       return;
     }
-    setIsNormalizing(true);
-    setNotice("");
+    setIsSubmittingText(true);
+    setNotice("Adding to the backlog…");
     try {
-      const response = await apiFetch("/api/recipes/text/normalize", {
+      const response = await apiFetch("/api/recipes/import/text", {
         method: "POST",
         body: JSON.stringify({ text }),
-        signal: AbortSignal.timeout(NORMALIZE_TIMEOUT_MS),
       });
-      const data = (await response.json().catch(() => ({}))) as { recipe?: Recipe; error?: string };
-      if (!response.ok || !data.recipe) throw new Error(data.error ?? "Couldn't normalize that recipe.");
-      setTextPreview(data.recipe);
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "TimeoutError") {
-        setNotice("The AI took too long. Try again.");
-      } else {
-        setNotice(error instanceof Error ? error.message : "Couldn't normalize that recipe.");
-      }
-    } finally {
-      setIsNormalizing(false);
-    }
-  }
-
-  async function saveTextRecipe() {
-    if (!textPreview) return;
-    if (!user) {
-      setAuthMode("login");
-      return;
-    }
-    setIsSavingText(true);
-    try {
-      const response = await apiFetch("/api/recipes/text", {
-        method: "POST",
-        body: JSON.stringify({ recipe: textPreview }),
-      });
-      const data = (await response.json().catch(() => ({}))) as {
+      const result = (await response.json().catch(() => ({}))) as {
+        alreadyFailed?: boolean;
+        job?: ImportJob;
         recipe?: Recipe;
         duplicate?: boolean;
+        message?: string;
         error?: string;
       };
-      if (!response.ok || !data.recipe) throw new Error(data.error ?? "Couldn't save the recipe.");
-      setTextPreview(null);
-      setRecipeText("");
-      registerImportedRecipe(
-        data.recipe,
-        data.duplicate ? "Already in your library." : "Recipe added.",
-        { openDetail: true, switchTab: true },
-      );
+      if (result.alreadyFailed && result.job) {
+        setNotice("");
+        setFailureDialog({
+          jobId: result.job.id,
+          url: undefined,
+          title: "Text already tried",
+          message:
+            result.message ??
+            "This text was tried before but the AI could not turn it into a recipe.",
+        });
+        return;
+      }
+      if (result.recipe) {
+        registerImportedRecipe(
+          result.recipe,
+          result.duplicate
+            ? "This text was already saved. Opened it and added it to your favorites."
+            : "Recipe normalized and saved to your recipe box.",
+          { openDetail: true, switchTab: true },
+        );
+        return;
+      }
+      if (result.job) {
+        setImportJob(result.job);
+        setRecipeText("");
+        setNotice("Added to the backlog. You can paste another recipe while it processes.");
+        openBacklog();
+        void pollJobStatus(result.job.id);
+        return;
+      }
+      throw new Error(result.error ?? "Unexpected server response.");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Couldn't save the recipe.");
+      setNotice(error instanceof Error ? error.message : "Couldn't queue that recipe. Try again.");
     } finally {
-      setIsSavingText(false);
+      setIsSubmittingText(false);
     }
   }
 
@@ -1844,18 +1833,6 @@ function App() {
         </button>
       )}
 
-      <div className="detail-primary">
-        <button
-          type="button"
-          className="primary-btn"
-          onClick={() =>
-            document.getElementById("recipe-steps")?.scrollIntoView({ behavior: "smooth", block: "start" })
-          }
-        >
-          Start cooking
-        </button>
-      </div>
-
     </div>
   ) : showQueue ? (
     <div className="screen queue">
@@ -1921,6 +1898,9 @@ function App() {
                 <span className="queue-row-text">
                   <span className="queue-row-title">
                     <span className="queue-url-text">{job.shortUrl}</span>
+                    {job.kind === "text" && job.textPreview && (
+                      <span className="queue-text-snippet">“{job.textPreview}”</span>
+                    )}
                     {job.isMine && <span className="you-chip">You</span>}
                   </span>
                   <span className="queue-row-sub">{jobRowSubtitle(job)}</span>
@@ -1948,7 +1928,7 @@ function App() {
                 </span>
                 <span className="queue-row-text">
                   <span className="queue-row-title">
-                    {job.url ? (
+                    {job.url && job.kind !== "text" ? (
                       <a
                         className="queue-url-text queue-link"
                         href={job.url}
@@ -1962,12 +1942,33 @@ function App() {
                     )}
                     {job.isMine && <span className="you-chip">You</span>}
                   </span>
-                  <span className="queue-row-sub">Couldn’t read this post</span>
+                  <span className="queue-row-sub">
+                    {job.kind === "text" ? "Couldn’t turn this text into a recipe" : "Couldn’t read this post"}
+                  </span>
                 </span>
-                {job.canRetry && (
-                  <button type="button" className="retry-btn manual-entry-btn" onClick={() => openManualSheet(job)}>
-                    Enter manually
-                  </button>
+                {job.kind === "text" ? (
+                  job.canRetry && (
+                    <button
+                      type="button"
+                      className="retry-btn manual-entry-btn"
+                      onClick={() =>
+                        setFailureDialog({
+                          jobId: job.id,
+                          title: "Text already tried",
+                          message:
+                            job.errorMessage ?? "The AI could not turn this text into a recipe.",
+                        })
+                      }
+                    >
+                      Try again
+                    </button>
+                  )
+                ) : (
+                  job.canRetry && (
+                    <button type="button" className="retry-btn manual-entry-btn" onClick={() => openManualSheet(job)}>
+                      Enter manually
+                    </button>
+                  )
                 )}
               </div>
             ))}
@@ -2052,20 +2053,6 @@ function App() {
               {isSubmitting ? "Checking…" : "Add to backlog"}
             </button>
           </form>
-          {importJob && (
-            <div className="progress" role="status" aria-live="polite">
-              <div className="progress-track">
-                <div
-                  className="progress-fill"
-                  style={{ width: `${Math.min(100, Math.max(0, importJob.progress))}%` }}
-                />
-              </div>
-              <div className="progress-meta">
-                <span>{importJob.stageLabel || importStageLabel(importJob.stage)}</span>
-                <span>{importJob.progress}%</span>
-              </div>
-            </div>
-          )}
           <p className="helper">Recipes are processed one at a time. You can add another link while the backlog runs.</p>
         </section>
       ) : (
@@ -2073,7 +2060,7 @@ function App() {
           <p>Paste a recipe from anywhere. AI checks it and tidies it into ingredients and steps.</p>
           {user ? (
             <>
-              <form className="text-form" onSubmit={handleNormalizeText}>
+              <form className="text-form" onSubmit={handleTextSubmit}>
                 <label className="sr-only" htmlFor="recipe-text">
                   Recipe text
                 </label>
@@ -2087,19 +2074,19 @@ function App() {
                   }}
                   placeholder={"Ingredients\n- 2 cups flour\n- 1 tsp salt\n\nSteps\n1. Mix everything\n2. Knead well"}
                   rows={7}
-                  disabled={isNormalizing}
+                  disabled={isSubmittingText}
                 />
                 <div className="text-form-footer">
                   <span className="text-count">
                     {recipeText.length.toLocaleString()} / {RECIPE_TEXT_MAX_CHARS.toLocaleString()}
                   </span>
-                  <button type="submit" disabled={isNormalizing || recipeText.trim().length === 0}>
-                    {isNormalizing ? `Checking… ${normalizeElapsed}s` : "Normalize with AI"}
+                  <button type="submit" disabled={isSubmittingText || recipeText.trim().length === 0}>
+                    {isSubmittingText ? "Checking…" : "Add to backlog"}
                   </button>
                 </div>
               </form>
               <p className="helper">
-                AI only reorganizes what you paste — it won’t add ingredients or steps. You can check the result before saving.
+                AI normalizes it into ingredients and steps — it won’t add anything you didn’t paste. It joins the backlog like a link and you’ll be notified when it’s ready.
               </p>
             </>
           ) : (
@@ -2127,6 +2114,20 @@ function App() {
               ? "Recipe extractor is not available"
               : "Recipe server unavailable"}
       </div>
+      {importJob && (
+        <div className="progress" role="status" aria-live="polite">
+          <div className="progress-track">
+            <div
+              className="progress-fill"
+              style={{ width: `${Math.min(100, Math.max(0, importJob.progress))}%` }}
+            />
+          </div>
+          <div className="progress-meta">
+            <span>{importJob.stageLabel || importStageLabel(importJob.stage)}</span>
+            <span>{importJob.progress}%</span>
+          </div>
+        </div>
+      )}
     </div>
   ) : (
     <div className="screen">
@@ -2510,7 +2511,7 @@ function App() {
         >
           <section className="sheet" role="alertdialog" aria-modal="true" aria-labelledby="failure-title">
             <div className="sheet-head">
-              <h2 id="failure-title">Link already tried</h2>
+              <h2 id="failure-title">{failureDialog.title ?? "Link already tried"}</h2>
               <button type="button" className="round-btn" aria-label="Close" onClick={() => setFailureDialog(null)}>
                 <Icon name="x" />
               </button>
@@ -2742,86 +2743,6 @@ function App() {
               </button>
               <button type="button" className="secondary-btn" onClick={() => setManualSheet(null)}>
                 Cancel
-              </button>
-            </div>
-          </section>
-        </div>
-      )}
-
-      {textPreview && (
-        <div
-          className="sheet-backdrop"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !isSavingText) setTextPreview(null);
-          }}
-        >
-          <section className="sheet preview-sheet" role="dialog" aria-modal="true" aria-labelledby="preview-title">
-            <div className="sheet-head">
-              <h2 id="preview-title">Check the recipe</h2>
-              <button
-                type="button"
-                className="round-btn"
-                aria-label="Close"
-                onClick={() => setTextPreview(null)}
-              >
-                <Icon name="x" />
-              </button>
-            </div>
-            <p className="sheet-hint">AI-normalized — check it before saving.</p>
-            <div className="preview-body">
-              <h3 className="preview-title">{textPreview.title}</h3>
-              {textPreview.description && (
-                <p className="preview-description">{textPreview.description}</p>
-              )}
-              <div className="preview-meta">
-                <span className="chip">{textPreview.category}</span>
-                {(textPreview.mealTypes ?? [])
-                  .filter((meal) => meal !== textPreview.category)
-                  .map((meal) => (
-                    <span key={meal} className="chip">{meal}</span>
-                  ))}
-                {textPreview.cuisine && <span className="chip">{textPreview.cuisine}</span>}
-                {textPreview.prepTimeMinutes != null && (
-                  <span className="chip">{textPreview.prepTimeMinutes} min</span>
-                )}
-                {textPreview.basePortions != null && (
-                  <span className="chip">{textPreview.basePortions} servings</span>
-                )}
-              </div>
-              <h4 className="preview-heading">Ingredients</h4>
-              <ul className="preview-ingredients">
-                {textPreview.ingredients?.map((ingredient, index) => {
-                  const amount =
-                    ingredient.amount != null ? String(ingredient.amount) : "";
-                  return (
-                    <li key={`${ingredient.name}-${index}`}>
-                      <span className="preview-amount">
-                        {[amount, ingredient.unit].filter(Boolean).join(" ") || "—"}
-                      </span>
-                      <span>{ingredient.name}</span>
-                    </li>
-                  );
-                })}
-              </ul>
-              <h4 className="preview-heading">Steps</h4>
-              <ol className="preview-steps">
-                {textPreview.steps?.map((step, index) => (
-                  <li key={index}>{step}</li>
-                ))}
-              </ol>
-            </div>
-            <div className="preview-actions">
-              <button type="button" className="secondary-btn" onClick={() => setTextPreview(null)}>
-                Discard
-              </button>
-              <button
-                type="button"
-                className="primary-btn"
-                disabled={isSavingText}
-                onClick={() => void saveTextRecipe()}
-              >
-                {isSavingText ? "Saving…" : "Save recipe"}
               </button>
             </div>
           </section>

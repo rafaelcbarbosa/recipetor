@@ -911,15 +911,6 @@ select:focus-visible {
   background: var(--tomato-action-press);
 }
 
-.detail-primary {
-  position: fixed;
-  left: 50%;
-  bottom: calc(16px + env(safe-area-inset-bottom));
-  z-index: 15;
-  width: min(calc(100% - 32px), 448px);
-  transform: translateX(-50%);
-}
-
 .summary {
   display: flex;
   align-items: center;
@@ -1352,87 +1343,13 @@ button.queue-row {
   height: 44px;
 }
 
-.preview-sheet {
-  max-height: 92dvh;
-}
-
-.preview-body {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.preview-title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  line-height: 1.3;
-}
-
-.preview-description {
-  margin: 0;
-  font-size: 15px;
-  line-height: 1.45;
+.queue-text-snippet {
+  overflow: hidden;
+  max-width: 140px;
   color: var(--muted);
-}
-
-.preview-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.preview-meta .chip {
-  padding: 4px 10px;
-  border-radius: 12px;
-  background: var(--canvas);
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--muted);
-}
-
-.preview-heading {
-  margin: 8px 0 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--muted);
-}
-
-.preview-ingredients,
-.preview-steps {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 0;
-  padding: 0 0 0 18px;
-}
-
-.preview-ingredients li,
-.preview-steps li {
-  font-size: 15px;
-  line-height: 1.45;
-}
-
-.preview-ingredients li {
-  display: flex;
-  gap: 8px;
-  padding-left: 0;
-  list-style: none;
-}
-
-.preview-amount {
-  min-width: 72px;
-  color: var(--muted);
-}
-
-.preview-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.preview-actions button {
-  flex: 1;
-  height: 44px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sheet-backdrop {

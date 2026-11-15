@@ -96,7 +96,6 @@ Pushed screen (no tab bar). 16 px padding, 20 px gaps.
    - Amount/unit sheet: for ingredients without a quantity or unit. Fields: amount and unit (including "No unit"). Saving persists the value to the recipe.
    - Missing calories: when a recipe is saved, the server reuses calories/macros from another recipe with the same normalized ingredient name and a compatible unit, using a per-gram/per-ml/per-piece rate. Equivalent names (plurals, preparation words, name containment) are matched. Existing values are never overwritten.
 9. **Steps:** heading (20/600); each step has a 28 px `butter` circle with the number (14/700) and text 16/1.45.
-10. **Primary button** pinned at the bottom: "Start cooking", full width, height 56, radius 28, `tomato-action` background, white 17/700.
 
 **Owner actions:** the "Delete recipe" link appears only for the recipe's creator or the site admin.
 

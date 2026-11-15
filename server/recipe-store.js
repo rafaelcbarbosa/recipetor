@@ -51,6 +51,7 @@ function parseJsonArray(value) {
 }
 
 function shortenUrl(url) {
+  if (typeof url === "string" && url.startsWith("text:")) return "Pasted recipe";
   try {
     const parsed = new URL(url);
     const host = parsed.hostname.replace(/^www\./, "");
@@ -59,6 +60,12 @@ function shortenUrl(url) {
   } catch {
     return url;
   }
+}
+
+const TEXT_JOB_PREFIX = "text:";
+
+function textJobUrl(text) {
+  return `${TEXT_JOB_PREFIX}${createHash("sha256").update(text).digest("hex").slice(0, 16)}`;
 }
 
 function isActiveJob(row) {
@@ -480,6 +487,10 @@ export function createRecipeStore(
     db.exec("ALTER TABLE extraction_jobs ADD COLUMN logs TEXT");
     console.log("Migration: added logs column to extraction_jobs table");
   }
+  if (!jobColumns.has("source_text")) {
+    db.exec("ALTER TABLE extraction_jobs ADD COLUMN source_text TEXT");
+    console.log("Migration: added source_text column to extraction_jobs table");
+  }
 
   // Anonymous-friendly usage events for the telemetry dashboard.
   db.exec(`
@@ -787,14 +798,20 @@ export function createRecipeStore(
       return { success: true, message: "Password reset code sent" };
     }
 
-    function createExtractionJob(url, userId) {
+    function createExtractionJob(url, userId, sourceText = null) {
     const id = randomUUID();
     const now = new Date().toISOString();
     db.prepare(
-      "INSERT INTO extraction_jobs (id, url, status, stage, progress, created_by, created_at, updated_at) VALUES (?, ?, 'pending', 'queued', 0, ?, ?, ?)"
-    ).run(id, url, userId ?? null, now, now);
+      "INSERT INTO extraction_jobs (id, url, source_text, status, stage, progress, created_by, created_at, updated_at) VALUES (?, ?, ?, 'pending', 'queued', 0, ?, ?, ?)"
+    ).run(id, url, sourceText, userId ?? null, now, now);
     if (userId) addJobWatcherStmt.run(id, userId, now);
     return { id, url, status: "pending", stage: "queued", progress: 0, createdAt: now };
+  }
+
+  // Queued recipe pasted as free text. The URL is a content hash so the
+  // existing dedupe/watch machinery treats identical texts as the same job.
+  function createTextJob(text, userId) {
+    return createExtractionJob(textJobUrl(text), userId, text);
   }
 
   function addJobWatcher(jobId, userId) {
@@ -818,6 +835,7 @@ export function createRecipeStore(
     return {
       id: row.id,
       url: row.url,
+      sourceText: row.source_text ?? null,
       status: row.status,
       stage: row.stage,
       progress: row.progress,
@@ -837,6 +855,7 @@ export function createRecipeStore(
     return {
       id: row.id,
       url: row.url,
+      sourceText: row.source_text ?? null,
       status: row.status,
       stage: row.stage,
       progress: row.progress,
@@ -857,6 +876,7 @@ export function createRecipeStore(
       .map((row) => ({
         id: row.id,
         url: row.url,
+        sourceText: row.source_text ?? null,
         status: row.status,
         stage: row.stage,
         progress: row.progress,
@@ -893,6 +913,7 @@ export function createRecipeStore(
       .map((row) => ({
         id: row.id,
         url: row.url,
+        sourceText: row.source_text ?? null,
         status: row.status,
         stage: row.stage,
         progress: row.progress,
@@ -912,6 +933,7 @@ export function createRecipeStore(
       .map((row) => ({
         id: row.id,
         url: row.url,
+        sourceText: row.source_text ?? null,
         status: row.status,
         stage: row.stage,
         progress: row.progress,
@@ -952,9 +974,16 @@ export function createRecipeStore(
 
   function toPublicJob(row, position, userId, watched = false) {
     const isCreator = Boolean(userId && row.created_by === userId);
+    const isText = typeof row.url === "string" && row.url.startsWith(TEXT_JOB_PREFIX);
+    const textPreview = isText && row.source_text
+      ? row.source_text.replace(/\s+/g, " ").trim().slice(0, 60)
+      : null;
     return {
       id: row.id,
       url: row.url,
+      sourceText: row.source_text ?? null,
+      kind: isText ? "text" : "link",
+      textPreview,
       shortUrl: shortenUrl(row.url),
       status: row.status,
       stage: row.stage,
@@ -1028,7 +1057,7 @@ export function createRecipeStore(
     if (row.status !== "failed") return { error: "NOT_FAILED" };
     const watched = Boolean(userId && jobWatcherStmt.get(id, userId));
     if (row.created_by && row.created_by !== userId && !watched) return { error: "FORBIDDEN" };
-    const created = createExtractionJob(row.url, userId ?? row.created_by ?? null);
+    const created = createExtractionJob(row.url, userId ?? row.created_by ?? null, row.source_text ?? null);
     for (const watcherId of listJobWatchers(id)) {
       addJobWatcher(created.id, watcherId);
     }
@@ -1036,6 +1065,7 @@ export function createRecipeStore(
       job: {
         id: created.id,
         shortUrl: shortenUrl(row.url),
+        kind: typeof row.url === "string" && row.url.startsWith(TEXT_JOB_PREFIX) ? "text" : "link",
         status: "pending",
         stage: "queued",
         progress: 0,
@@ -1736,6 +1766,8 @@ export function createRecipeStore(
     list,
     saveImported,
     createExtractionJob,
+    createTextJob,
+    textJobUrl,
     getExtractionJob,
     getExtractionJobByUrl,
     getExtractionJobsByUrl,

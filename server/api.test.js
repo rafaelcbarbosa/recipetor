@@ -1193,7 +1193,7 @@ test("keeps extraction logs for successful and failed jobs and serves them to th
   }
 });
 
-test("normalizes pasted recipe text for signed-in users", async () => {
+test("queues pasted recipe text and normalizes it through the backlog", async () => {
   const { store, cleanup } = createTestStore();
   let receivedText = "";
   const { server, baseUrl } = await startServer(store, {
@@ -1216,88 +1216,90 @@ test("normalizes pasted recipe text for signed-in users", async () => {
   });
 
   try {
-    const anonymous = await request(baseUrl, "/api/recipes/text/normalize", {
+    const anonymous = await request(baseUrl, "/api/recipes/import/text", {
       method: "POST",
       body: { text: "Ingredients: 2 cups flour" },
     });
     assert.equal(anonymous.status, 401);
 
-    const user = await createVerifiedUser(baseUrl, "text-normalize@example.com");
-    const empty = await request(baseUrl, "/api/recipes/text/normalize", {
+    const user = await createVerifiedUser(baseUrl, "text-queue@example.com");
+    const empty = await request(baseUrl, "/api/recipes/import/text", {
       method: "POST",
       token: user.token,
       body: { text: "   " },
     });
     assert.equal(empty.status, 400);
 
-    const response = await request(baseUrl, "/api/recipes/text/normalize", {
+    const response = await request(baseUrl, "/api/recipes/import/text", {
       method: "POST",
       token: user.token,
       body: { text: "Ingredients\n- 2 cups flour\n\nSteps\n1. Mix and rest" },
     });
-    assert.equal(response.status, 200);
-    const body = await response.json();
-    assert.equal(body.recipe.title, "Normalized Recipe");
+    assert.equal(response.status, 202);
+    const queued = await response.json();
+    assert.equal(queued.job.kind, "text");
+    assert.equal(queued.job.shortUrl, "Pasted recipe");
     assert.match(receivedText, /Mix and rest/);
 
-    const deniedSave = await request(baseUrl, "/api/recipes/text", {
+    const jobs = await waitForJobs(store, 1);
+    assert.equal(jobs[0].status, "completed");
+    assert.equal(jobs[0].recipeId, queued.job.recipeId ?? jobs[0].recipeId);
+
+    // Same text returns the saved recipe instead of re-running the AI.
+    const again = await request(baseUrl, "/api/recipes/import/text", {
       method: "POST",
-      body: { recipe: body.recipe },
+      token: user.token,
+      body: { text: "Ingredients\n- 2 cups flour\n\nSteps\n1. Mix and rest" },
     });
-    assert.equal(deniedSave.status, 401);
+    assert.equal(again.status, 200);
+    const saved = await again.json();
+    assert.equal(saved.duplicate, true);
+    assert.equal(saved.recipe.title, "Normalized Recipe");
+    assert.deepEqual(saved.recipe.sourceUrls, []);
   } finally {
     await stopServer(server);
     cleanup();
   }
 });
 
-test("saves a pasted-text recipe without a source URL and dedupes it", async () => {
+test("failed text normalization stays in the backlog and can be retried", async () => {
   const { store, cleanup } = createTestStore();
-  const { server, baseUrl } = await startServer(store);
-  const textRecipe = {
-    title: "Pasted Pancakes",
-    description: "",
-    category: "Breakfast",
-    cuisine: "",
-    mealTypes: ["Breakfast"],
-    dietTags: [],
-    prepTimeMinutes: 15,
-    basePortions: 2,
-    ingredients: recipe.ingredients,
-    instructions: recipe.steps,
-    totals: recipe.totals,
-  };
+  let attempts = 0;
+  const { server, baseUrl } = await startServer(store, {
+    normalizeRecipe: async () => {
+      attempts += 1;
+      throw new Error("That text doesn't look like a complete recipe.");
+    },
+  });
 
   try {
-    const user = await createVerifiedUser(baseUrl, "text-save@example.com");
-    const first = await request(baseUrl, "/api/recipes/text", {
+    const user = await createVerifiedUser(baseUrl, "text-fail@example.com");
+    const first = await request(baseUrl, "/api/recipes/import/text", {
       method: "POST",
       token: user.token,
-      body: { recipe: textRecipe },
+      body: { text: "only an ingredient list, no steps" },
     });
-    assert.equal(first.status, 200);
-    const saved = await first.json();
-    assert.equal(saved.duplicate, false);
-    assert.equal(saved.recipe.title, "Pasted Pancakes");
-    assert.deepEqual(saved.recipe.sourceUrls, []);
-    assert.equal(saved.recipe.isFavorite, true);
+    assert.equal(first.status, 202);
+    await waitForJobs(store, 1);
 
-    const second = await request(baseUrl, "/api/recipes/text", {
-      method: "POST",
-      token: user.token,
-      body: { recipe: textRecipe },
-    });
-    assert.equal(second.status, 200);
-    const again = await second.json();
-    assert.equal(again.duplicate, true);
-    assert.equal(again.recipe.id, saved.recipe.id);
+    // The failed row is visible as a text job and resubmitting asks to retry.
+    const jobs = store.listPublicExtractionJobs();
+    const failed = jobs.find((job) => job.status === "failed");
+    assert.ok(failed);
+    assert.equal(failed.kind, "text");
+    assert.match(failed.errorMessage ?? "", /complete recipe/);
 
-    const invalid = await request(baseUrl, "/api/recipes/text", {
+    const resubmit = await request(baseUrl, "/api/recipes/import/text", {
       method: "POST",
       token: user.token,
-      body: { recipe: { ...textRecipe, title: "" } },
+      body: { text: "only an ingredient list, no steps" },
     });
-    assert.equal(invalid.status, 400);
+    assert.equal(resubmit.status, 200);
+    const body = await resubmit.json();
+    assert.equal(body.alreadyFailed, true);
+    assert.equal(body.job.kind, "text");
+
+    assert.equal(attempts, 1);
   } finally {
     await stopServer(server);
     cleanup();

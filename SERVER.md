@@ -202,7 +202,7 @@ local to that host.
 - Failures stay in the queue for 24h, one row per link, then disappear. A failure row disappears immediately once its link has a recipe.
 - Completed jobs are never shown in the queue. The Library updates automatically and a toast announces the new recipe.
 - Failed rows offer manual entry to the creator/watchers. A manual recipe attaches the failed link as a source and is favorited/historied for the entrant and all watchers.
-- Free-text entry (Add tab → Paste text): signed-in users paste recipe text, the app normalizes it with AI (`POST /api/recipes/text/normalize`), shows a preview, and saves on confirmation (`POST /api/recipes/text`). Text recipes get no source URL; they still dedupe by title/ingredients, are auto-favorited, and record a `text_entry` usage event. Normalization uses the same free text model as link extraction; the app allows up to 3 minutes for it.
+- Free-text entry (Add tab → Paste text): signed-in users paste recipe text and it is queued exactly like a link (`POST /api/recipes/import/text`). The queue normalizes it with AI (extractor `POST /normalize`), then saves automatically — no source URL, title/ingredient dedupe, auto-favorite, `text_entry` usage event. Identical texts map to the same job (the job URL is a `text:<sha256>` prefix; the raw text is stored in `source_text`). Failed text rows offer retry, not manual entry. The app allows up to 3 minutes for normalization.
 - Failed extractions keep the post screenshot when the extractor captured one. The queue exposes the full post link and the screenshot so the user can identify the post.
 - Deletion: the admin can delete any recipe; the original loader can delete their own.
 
@@ -215,8 +215,7 @@ Relevant API routes:
 | `GET` | `/api/recipes/import/status/:id` | Job status and live progress |
 | `POST` | `/api/recipes/import/retry/:id` | Retry a failed job (creator/watchers) |
 | `POST` | `/api/recipes/manual` | Save a manual recipe for a failed job |
-| `POST` | `/api/recipes/text/normalize` | Signed-in only: normalize pasted recipe text with AI (no save) |
-| `POST` | `/api/recipes/text` | Signed-in only: save an AI-normalized text recipe (no source URL) |
+| `POST` | `/api/recipes/import/text` | Signed-in only: queue pasted recipe text for AI normalization |
 | `POST` | `/api/events/app-open` | Usage event: app opened |
 | `POST` | `/api/events/recipe-view` | Usage event: recipe detail opened |
 | `GET` | `/api/telemetry` | Admin-only telemetry data |
