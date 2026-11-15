@@ -140,12 +140,15 @@ export function canonicalizeInstagramUrl(input) {
     url.protocol !== "https:" ||
     !["instagram.com", "www.instagram.com"].includes(url.hostname.toLowerCase()) ||
     url.port ||
-    !/^\/(?:p|reel|tv)\/[A-Za-z0-9_-]+\/?$/i.test(url.pathname)
+    !/^\/(?:p|reels?|tv)\/[A-Za-z0-9_-]+\/?$/i.test(url.pathname)
   ) {
     throw new HttpError(400, "Use a public Instagram post or reel link.");
   }
 
-  return `https://www.instagram.com${url.pathname.replace(/\/?$/, "/")}`;
+  // Instagram's share sheet emits /reels/; normalize it so /reel/ and /reels/
+  // links for the same post deduplicate to one job.
+  const pathname = url.pathname.replace(/^\/reels\//i, "/reel/");
+  return `https://www.instagram.com${pathname.replace(/\/?$/, "/")}`;
 }
 
 function jsonResponse(response, status, value) {

@@ -98,6 +98,10 @@ test("canonicalizes public Instagram posts and rejects other hosts", () => {
     canonicalizeInstagramUrl("https://www.instagram.com/reel/ABC123/?igsh=tracking#comment"),
     "https://www.instagram.com/reel/ABC123/",
   );
+  assert.equal(
+    canonicalizeInstagramUrl("https://www.instagram.com/reels/ABC123/?igsh=tracking"),
+    "https://www.instagram.com/reel/ABC123/",
+  );
   assert.throws(() => canonicalizeInstagramUrl("https://example.com/reel/ABC123/"), /Instagram/);
   assert.throws(() => canonicalizeInstagramUrl("http://instagram.com/p/ABC123/"), /Instagram/);
   assert.throws(() => canonicalizeInstagramUrl("https://instagram.com/stories/user/123/"), /Instagram/);

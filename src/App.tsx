@@ -1234,7 +1234,7 @@ function App() {
     if (
       url.protocol !== "https:" ||
       !["instagram.com", "www.instagram.com"].includes(url.hostname) ||
-      !/^\/(?:p|reel|tv)\/[A-Za-z0-9_-]+\/?$/i.test(url.pathname)
+      !/^\/(?:p|reels?|tv)\/[A-Za-z0-9_-]+\/?$/i.test(url.pathname)
     ) {
       setNotice("That doesn't look like an Instagram link. Check the URL and try again.");
       return;
