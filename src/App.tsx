@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
 import "./App.css";
 import { compatibleUnits, isConvertibleUnit, isKnownUnit, normalizeUnit, UNIT_GROUPS } from "./units";
 
@@ -267,6 +267,12 @@ function Icon({
       </>
     ),
     x: <path d="M18 6 6 18M6 6l12 12" />,
+    pencil: (
+      <>
+        <path d="M12 20h9" />
+        <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+      </>
+    ),
     link: (
       <>
         <path d="M10 13a5 5 0 0 0 7.07 0l3-3A5 5 0 0 0 13 2.93l-1.72 1.71" />
@@ -470,6 +476,21 @@ function App() {
   const [instagramLink, setInstagramLink] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [importJob, setImportJob] = useState<ImportJob | null>(null);
+
+  const [editSheet, setEditSheet] = useState<Recipe | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editCategory, setEditCategory] = useState("Dinner");
+  const [editCuisine, setEditCuisine] = useState("");
+  const [editServings, setEditServings] = useState("");
+  const [editPrep, setEditPrep] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editSteps, setEditSteps] = useState("");
+  const [editLinks, setEditLinks] = useState<string[]>([]);
+  const [editNewLink, setEditNewLink] = useState("");
+  const [editImageFile, setEditImageFile] = useState<File | null>(null);
+  const [editImagePreview, setEditImagePreview] = useState<string | null>(null);
+  const [editImageRemoved, setEditImageRemoved] = useState(false);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   const [addMode, setAddMode] = useState<AddMode>("link");
   const [recipeText, setRecipeText] = useState("");
@@ -739,7 +760,8 @@ function App() {
       showTagSheet ||
       ingredientSheet ||
       failureDialog ||
-      manualSheet,
+      manualSheet ||
+      editSheet,
   );
   useEffect(() => {
     if (!overlayOpen) return;
@@ -754,6 +776,7 @@ function App() {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       if (manualSheet) setManualSheet(null);
+      else if (editSheet) setEditSheet(null);
       else if (failureDialog) setFailureDialog(null);
       else if (ingredientSheet) setIngredientSheet(null);
       else if (showTagSheet) setShowTagSheet(false);
@@ -1209,6 +1232,154 @@ function App() {
     }
   }
 
+  function openEditSheet(recipe: Recipe) {
+    if (!user) {
+      setAuthMode("login");
+      setNotice("Sign in to edit a recipe.");
+      return;
+    }
+    setNotice("");
+    setEditSheet(recipe);
+    setEditTitle(recipe.title);
+    setEditCategory(recipe.category);
+    setEditCuisine(recipe.cuisine ?? "");
+    setEditServings(recipe.basePortions != null ? String(recipe.basePortions) : "");
+    setEditPrep(recipe.prepTimeMinutes != null ? String(recipe.prepTimeMinutes) : "");
+    setEditDescription(recipe.description ?? "");
+    setEditSteps((recipe.steps ?? []).join("\n"));
+    setEditLinks(recipe.sourceUrls ?? []);
+    setEditNewLink("");
+    setEditImageFile(null);
+    setEditImagePreview(null);
+    setEditImageRemoved(false);
+  }
+
+  function onEditImageChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setEditImageFile(file);
+    setEditImagePreview(URL.createObjectURL(file));
+    setEditImageRemoved(false);
+  }
+
+  function addEditLink() {
+    const value = editNewLink.trim();
+    if (!value) return;
+    let parsed: URL;
+    try {
+      parsed = new URL(value.startsWith("http") ? value : `https://${value}`);
+    } catch {
+      setNotice("Enter a valid Instagram link.");
+      return;
+    }
+    if (!["instagram.com", "www.instagram.com", "m.instagram.com"].includes(parsed.hostname.toLowerCase())) {
+      setNotice("Enter an Instagram post or reel link.");
+      return;
+    }
+    if (editLinks.includes(parsed.href)) {
+      setNotice("That link is already attached.");
+      return;
+    }
+    setNotice("");
+    setEditLinks((current) => [...current, parsed.href]);
+    setEditNewLink("");
+  }
+
+  function removeEditLink(link: string) {
+    setEditLinks((current) => current.filter((item) => item !== link));
+    setNotice("");
+  }
+
+  async function downscaleImage(file: File): Promise<Blob> {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, 1024 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext("2d");
+    context?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", 0.85),
+    );
+    return blob ?? file;
+  }
+
+  async function saveEditRecipe() {
+    if (!editSheet) return;
+    const title = editTitle.trim();
+    if (!title) {
+      setNotice("Add a recipe title.");
+      return;
+    }
+    const steps = editSteps
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (steps.length === 0) {
+      setNotice("Add at least one step.");
+      return;
+    }
+    const prep = editPrep.trim() === "" ? null : Number(editPrep);
+    if (prep != null && (!Number.isInteger(prep) || prep < 1 || prep > 1440)) {
+      setNotice("Prep time must be 1-1440 minutes.");
+      return;
+    }
+    const servings = editServings.trim() === "" ? null : Number(editServings);
+    if (servings != null && (!Number.isInteger(servings) || servings < 1 || servings > 1000)) {
+      setNotice("Servings must be between 1 and 1000.");
+      return;
+    }
+
+    setIsSavingEdit(true);
+    try {
+      const response = await apiFetch(`/api/recipes/${editSheet.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          title,
+          description: editDescription.trim().slice(0, 500),
+          category: editCategory,
+          cuisine: editCuisine.trim().slice(0, 50),
+          prepTimeMinutes: prep,
+          basePortions: servings,
+          steps,
+          sourceUrls: editLinks,
+          ...(editImageRemoved ? { imageUrl: null } : {}),
+        }),
+      });
+      const data = (await response.json().catch(() => ({}))) as { recipe?: Recipe; error?: string };
+      if (!response.ok || !data.recipe) throw new Error(data.error ?? "Couldn't update the recipe.");
+      let recipe = data.recipe;
+
+      if (editImageFile) {
+        const blob = await downscaleImage(editImageFile);
+        const imageResponse = await apiFetch(`/api/recipes/${editSheet.id}/image`, {
+          method: "POST",
+          headers: { "Content-Type": blob.type },
+          body: blob,
+        });
+        const imageData = (await imageResponse.json().catch(() => ({}))) as {
+          recipe?: Recipe;
+          error?: string;
+        };
+        if (!imageResponse.ok || !imageData.recipe) {
+          throw new Error(imageData.error ?? "Couldn't upload the image.");
+        }
+        recipe = imageData.recipe;
+      }
+
+      knownRecipes.current.set(recipe.id, recipe);
+      setRecipes((current) => current.map((item) => (item.id === recipe.id ? recipe : item)));
+      setHistory((current) => current.map((entry) => (entry.id === recipe.id ? { ...recipe, action: entry.action, createdAt: entry.createdAt } : entry)));
+      setDetail(recipe);
+      setEditSheet(null);
+      setNotice("Recipe updated.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Couldn't update the recipe.");
+    } finally {
+      setIsSavingEdit(false);
+    }
+  }
+
   function switchAddMode(mode: AddMode) {
     setAddMode(mode);
     setNotice("");
@@ -1648,6 +1819,16 @@ function App() {
           <Icon name="chevron-left" />
         </button>
         <div className="detail-actions">
+          {user && (
+            <button
+              type="button"
+              className="round-btn glass"
+              aria-label="Edit recipe"
+              onClick={() => openEditSheet(detail)}
+            >
+              <Icon name="pencil" />
+            </button>
+          )}
           <button
             type="button"
             className={`round-btn glass heart-btn${detailFavorite ? " on" : ""}`}
@@ -2543,6 +2724,187 @@ function App() {
                 Cancel
               </button>
             </div>
+          </section>
+        </div>
+      )}
+
+      {editSheet && (
+        <div
+          className="sheet-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !isSavingEdit) setEditSheet(null);
+          }}
+        >
+          <section className="sheet manual-sheet" role="dialog" aria-modal="true" aria-labelledby="edit-title">
+            <div className="sheet-head">
+              <h2 id="edit-title">Edit recipe</h2>
+              <button type="button" className="round-btn" aria-label="Close" onClick={() => setEditSheet(null)}>
+                <Icon name="x" />
+              </button>
+            </div>
+
+            <div className="field">
+              <label htmlFor="edit-title-input">Title</label>
+              <input
+                id="edit-title-input"
+                value={editTitle}
+                onChange={(event) => setEditTitle(event.target.value)}
+                maxLength={150}
+              />
+            </div>
+            <div className="manual-grid">
+              <div className="field">
+                <label htmlFor="edit-category">Category</label>
+                <div className="select-wrap">
+                  <select
+                    id="edit-category"
+                    value={editCategory}
+                    onChange={(event) => setEditCategory(event.target.value)}
+                  >
+                    {MANUAL_CATEGORIES.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                  </select>
+                  <Icon name="chevrons-up-down" size={16} />
+                </div>
+              </div>
+              <div className="field">
+                <label htmlFor="edit-cuisine">Cuisine</label>
+                <input
+                  id="edit-cuisine"
+                  value={editCuisine}
+                  onChange={(event) => setEditCuisine(event.target.value)}
+                  maxLength={50}
+                  placeholder="e.g. Italian"
+                />
+              </div>
+            </div>
+            <div className="manual-grid">
+              <div className="field">
+                <label htmlFor="edit-servings">Servings</label>
+                <input
+                  id="edit-servings"
+                  type="number"
+                  min="1"
+                  max="1000"
+                  step="1"
+                  value={editServings}
+                  onChange={(event) => setEditServings(event.target.value)}
+                  placeholder="4"
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="edit-prep">Prep minutes</label>
+                <input
+                  id="edit-prep"
+                  type="number"
+                  min="1"
+                  max="1440"
+                  step="1"
+                  value={editPrep}
+                  onChange={(event) => setEditPrep(event.target.value)}
+                  placeholder="30"
+                />
+              </div>
+            </div>
+            <div className="field">
+              <label htmlFor="edit-description">Description</label>
+              <textarea
+                id="edit-description"
+                rows={2}
+                maxLength={500}
+                value={editDescription}
+                onChange={(event) => setEditDescription(event.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="edit-steps">Steps (one per line)</label>
+              <textarea
+                id="edit-steps"
+                rows={6}
+                value={editSteps}
+                onChange={(event) => setEditSteps(event.target.value)}
+              />
+            </div>
+
+            <h3 className="manual-heading">Image</h3>
+            <div className="edit-image">
+              {editImagePreview || (!editImageRemoved && editSheet.imageUrl) ? (
+                <img src={editImagePreview ?? editSheet.imageUrl ?? undefined} alt="" />
+              ) : (
+                <span className="edit-image-empty">
+                  <Icon name="soup" size={24} />
+                </span>
+              )}
+              <div className="edit-image-actions">
+                <label className="secondary-btn edit-upload-btn">
+                  Choose photo
+                  <input type="file" accept="image/*" className="sr-only" onChange={onEditImageChange} />
+                </label>
+                {(editSheet.imageUrl || editImagePreview) && !editImageRemoved && (
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    onClick={() => {
+                      setEditImageFile(null);
+                      setEditImagePreview(null);
+                      setEditImageRemoved(true);
+                    }}
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <h3 className="manual-heading">Instagram links</h3>
+            {editLinks.length === 0 && <p className="sheet-hint">No source links yet.</p>}
+            {editLinks.map((link) => (
+              <div className="edit-link-row" key={link}>
+                <a href={link} target="_blank" rel="noreferrer">
+                  {link}
+                </a>
+                <button
+                  type="button"
+                  className="round-btn"
+                  aria-label={`Remove ${link}`}
+                  onClick={() => removeEditLink(link)}
+                >
+                  <Icon name="x" size={16} />
+                </button>
+              </div>
+            ))}
+            <div className="edit-link-add">
+              <input
+                placeholder="Add Instagram link"
+                value={editNewLink}
+                onChange={(event) => setEditNewLink(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    addEditLink();
+                  }
+                }}
+              />
+              <button type="button" className="secondary-btn" onClick={addEditLink}>
+                Add
+              </button>
+            </div>
+
+            <button
+              type="button"
+              className="primary-btn"
+              disabled={isSavingEdit}
+              onClick={() => void saveEditRecipe()}
+            >
+              {isSavingEdit ? "Saving…" : "Save changes"}
+            </button>
+            <button type="button" className="secondary-btn" onClick={() => setEditSheet(null)}>
+              Cancel
+            </button>
           </section>
         </div>
       )}

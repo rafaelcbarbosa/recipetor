@@ -205,6 +205,7 @@ local to that host.
 - Free-text entry (Add tab → Paste text): signed-in users paste recipe text and it is queued exactly like a link (`POST /api/recipes/import/text`). The queue normalizes it with AI (extractor `POST /normalize`), then saves automatically — no source URL, title/ingredient dedupe, auto-favorite, `text_entry` usage event. Identical texts map to the same job (the job URL is a `text:<sha256>` prefix; the raw text is stored in `source_text`). Failed text rows offer retry, not manual entry. The app allows up to 3 minutes for normalization. Schema-shaped model failures are retried once inside the queue and every attempt is written to the job's logs.
 - Failed extractions keep the post screenshot when the extractor captured one. The queue exposes the full post link and the screenshot so the user can identify the post.
 - Deletion: the admin can delete any recipe; the original loader can delete their own.
+- Editing: any signed-in user can edit a recipe (pencil button on the detail screen): title, description, category, cuisine, servings, prep time, steps, the photo (upload ≤5 MB JPEG/PNG/WebP, downscaled client-side, or remove it), and the Instagram source links. Links already attached to another recipe are rejected; a link never points at two recipes. Title changes refresh the dedupe key/fingerprint; edits record an `updated` history entry.
 
 Relevant API routes:
 
@@ -216,6 +217,8 @@ Relevant API routes:
 | `POST` | `/api/recipes/import/retry/:id` | Retry a failed job (creator/watchers) |
 | `POST` | `/api/recipes/manual` | Save a manual recipe for a failed job |
 | `POST` | `/api/recipes/import/text` | Signed-in only: queue pasted recipe text for AI normalization |
+| `PATCH` | `/api/recipes/:id` | Signed-in only: edit fields, steps, `sourceUrls` (Instagram links), or `imageUrl: null` to remove the image |
+| `POST` | `/api/recipes/:id/image` | Signed-in only: raw JPEG/PNG/WebP upload (≤5 MB), stored in the media dir |
 | `POST` | `/api/events/app-open` | Usage event: app opened |
 | `POST` | `/api/events/recipe-view` | Usage event: recipe detail opened |
 | `GET` | `/api/telemetry` | Admin-only telemetry data |

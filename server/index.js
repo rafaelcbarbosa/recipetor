@@ -1,5 +1,5 @@
 import { createServer as createHttpServer } from "node:http";
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +12,7 @@ const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const MAX_REQUEST_BYTES = 2048;
 const MAX_TEXT_REQUEST_BYTES = 32 * 1024;
 const MAX_RECIPE_TEXT_CHARS = 12_000;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const IMPORT_LIMIT = 10;
 const IMPORT_WINDOW_MS = 60 * 60 * 1000;
 const JWT_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -839,6 +840,122 @@ export function createServer({
         };
         return jsonResponse(response, result.error === "NOT_FOUND" ? 404 : 400, {
           error: messages[result.error] ?? "Couldn't update the ingredient.",
+        });
+      }
+      return jsonResponse(response, 200, { recipe: result.recipe });
+    }
+
+    // Edit a recipe: fields, steps, and Instagram source links. Any signed-in
+    // user may edit; deletion stays creator/admin-only.
+    const editMatch = pathname.match(/^\/api\/recipes\/([^/]+)$/);
+    if (editMatch && request.method === "PATCH") {
+      checkSameOrigin(request);
+      const userId = extractUserId(request);
+      if (!userId) return jsonResponse(response, 401, { error: "Authentication required." });
+
+      const body = await readJson(request, 64 * 1024);
+      const changes = body && typeof body === "object" && !Array.isArray(body) ? body : {};
+      if (Object.keys(changes).length === 0) {
+        return jsonResponse(response, 400, { error: "No changes were provided." });
+      }
+
+      // Source links are edited transactionally through their own call.
+      const { sourceUrls, ...fieldChanges } = changes;
+      const hasSources = Object.hasOwn(changes, "sourceUrls");
+
+      let result;
+      if (Object.keys(fieldChanges).length > 0) {
+        result = store.updateRecipe(editMatch[1], fieldChanges, userId, isAdminRequest(request));
+        if (result.error) {
+          const messages = {
+            NOT_FOUND: "Recipe not found.",
+            INVALID_TITLE: "Enter a recipe title of up to 150 characters.",
+            INVALID_DESCRIPTION: "Description must be 500 characters or fewer.",
+            INVALID_CATEGORY: "Choose a valid category.",
+            INVALID_CUISINE: "Cuisine must be 50 characters or fewer.",
+            INVALID_PREP: "Prep time must be 1-1440 minutes.",
+            INVALID_PORTIONS: "Servings must be between 1 and 1000.",
+            INVALID_STEPS: "Add 1-40 steps of up to 1500 characters each.",
+            INVALID_IMAGE: "The image reference is invalid.",
+            NO_CHANGES: "No changes were provided.",
+          };
+          return jsonResponse(response, result.error === "NOT_FOUND" ? 404 : 400, {
+            error: messages[result.error] ?? "Couldn't update the recipe.",
+          });
+        }
+      }
+
+      if (hasSources) {
+        const canonicalLinks = [];
+        try {
+          for (const url of Array.isArray(sourceUrls) ? sourceUrls : [sourceUrls]) {
+            canonicalLinks.push(canonicalizeInstagramUrl(url));
+          }
+        } catch (error) {
+          return jsonResponse(response, 400, {
+            error: error instanceof Error ? error.message : "Enter a valid Instagram post or reel link.",
+          });
+        }
+        const sourcesResult = store.updateRecipeSources(
+          editMatch[1],
+          canonicalLinks,
+          userId,
+          isAdminRequest(request),
+        );
+        if (sourcesResult.error) {
+          const messages = {
+            NOT_FOUND: "Recipe not found.",
+            INVALID_LINK: "Enter a valid Instagram post or reel link.",
+            LINK_IN_USE: "That Instagram link already belongs to another recipe.",
+          };
+          return jsonResponse(response, sourcesResult.error === "NOT_FOUND" ? 404 : 400, {
+            error: messages[sourcesResult.error] ?? "Couldn't update the links.",
+          });
+        }
+        result = sourcesResult;
+      }
+
+      if (!result) {
+        return jsonResponse(response, 400, { error: "No changes were provided." });
+      }
+      return jsonResponse(response, 200, { recipe: result.recipe });
+    }
+
+    // Replace a recipe's image with an uploaded photo.
+    const imageMatch = pathname.match(/^\/api\/recipes\/([^/]+)\/image$/);
+    if (imageMatch && request.method === "POST") {
+      checkSameOrigin(request);
+      const userId = extractUserId(request);
+      if (!userId) return jsonResponse(response, 401, { error: "Authentication required." });
+
+      const contentType = String(request.headers["content-type"] || "");
+      const extension = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" }[contentType];
+      if (!extension) {
+        return jsonResponse(response, 415, { error: "Upload a JPEG, PNG, or WebP image." });
+      }
+
+      const chunks = [];
+      let size = 0;
+      for await (const chunk of request) {
+        size += chunk.length;
+        if (size > MAX_IMAGE_BYTES) throw new HttpError(413, "Image must be 5 MB or smaller.");
+        chunks.push(chunk);
+      }
+      const image = Buffer.concat(chunks);
+      if (image.length === 0) {
+        return jsonResponse(response, 400, { error: "Upload an image file." });
+      }
+
+      const hash = createHash("sha256").update(image).digest("hex").slice(0, 32);
+      const filename = `${hash}.${extension}`;
+      mkdirSync(mediaDir, { recursive: true });
+      writeFileSync(resolve(mediaDir, filename), image, { mode: 0o644 });
+      const imageUrl = `/media/${filename}`;
+
+      const result = store.updateRecipe(imageMatch[1], { imageUrl }, userId, isAdminRequest(request));
+      if (result.error) {
+        return jsonResponse(response, result.error === "NOT_FOUND" ? 404 : 400, {
+          error: "Couldn't update the recipe image.",
         });
       }
       return jsonResponse(response, 200, { recipe: result.recipe });

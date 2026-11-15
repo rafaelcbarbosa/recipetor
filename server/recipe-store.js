@@ -6,6 +6,7 @@ import nodemailer from "nodemailer";
 
 const FINISHED_JOB_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const COMPLETED_JOB_LIMIT = 10;
+const RECIPE_CATEGORIES = new Set(["Breakfast", "Lunch", "Dinner", "Dessert", "Snack", "Other"]);
 
 function createTransporter() {
   // Use local Postfix relay if available (no auth needed on localhost)
@@ -1466,6 +1467,139 @@ export function createRecipeStore(
     return { recipe: getRecipe(recipeId, userId, isAdmin) };
   }
 
+  // Editable recipe fields. `changes` keys map to columns; a `title` change
+  // also refreshes title_key and the fingerprint used for dedupe. Permission
+  // is enforced by the caller; any signed-in user may edit.
+  function updateRecipe(recipeId, changes, userId = null, isAdmin = false) {
+    const row = recipeById.get(recipeId);
+    if (!row) return { error: "NOT_FOUND" };
+
+    const now = new Date().toISOString();
+    const fields = [];
+    const params = [];
+    let titleKey = row.title_key;
+
+    if (Object.hasOwn(changes, "title")) {
+      const title = typeof changes.title === "string" ? changes.title.trim() : "";
+      if (!title || title.length > 150) return { error: "INVALID_TITLE" };
+      titleKey = normalizeText(title);
+      fields.push("title = ?", "title_key = ?", "fingerprint = ?");
+      let fingerprintValue = row.fingerprint;
+      try {
+        fingerprintValue = fingerprint(titleKey, JSON.parse(row.ingredients_json));
+      } catch {
+        // Keep the previous fingerprint when ingredients cannot be parsed.
+      }
+      params.push(title, titleKey, fingerprintValue);
+    }
+    if (Object.hasOwn(changes, "description")) {
+      if (typeof changes.description !== "string" || changes.description.length > 500) {
+        return { error: "INVALID_DESCRIPTION" };
+      }
+      fields.push("description = ?");
+      params.push(changes.description.trim());
+    }
+    if (Object.hasOwn(changes, "category")) {
+      if (!RECIPE_CATEGORIES.has(changes.category)) return { error: "INVALID_CATEGORY" };
+      fields.push("category = ?");
+      params.push(changes.category);
+    }
+    if (Object.hasOwn(changes, "cuisine")) {
+      if (typeof changes.cuisine !== "string" || changes.cuisine.length > 50) {
+        return { error: "INVALID_CUISINE" };
+      }
+      fields.push("cuisine = ?");
+      params.push(changes.cuisine.trim());
+    }
+    if (Object.hasOwn(changes, "prepTimeMinutes")) {
+      const prep = changes.prepTimeMinutes;
+      if (prep !== null && (!Number.isInteger(prep) || prep < 1 || prep > 1440)) {
+        return { error: "INVALID_PREP" };
+      }
+      fields.push("prep_time_minutes = ?");
+      params.push(prep);
+    }
+    if (Object.hasOwn(changes, "basePortions")) {
+      const portions = changes.basePortions;
+      if (portions !== null && (!Number.isInteger(portions) || portions < 1 || portions > 1000)) {
+        return { error: "INVALID_PORTIONS" };
+      }
+      fields.push("base_portions = ?");
+      params.push(portions);
+    }
+    if (Object.hasOwn(changes, "steps")) {
+      const steps = changes.steps;
+      if (
+        !Array.isArray(steps) ||
+        steps.length < 1 ||
+        steps.length > 40 ||
+        steps.some((step) => typeof step !== "string" || !step.trim() || step.trim().length > 1500)
+      ) {
+        return { error: "INVALID_STEPS" };
+      }
+      fields.push("steps_json = ?");
+      params.push(JSON.stringify(steps.map((step) => step.trim())));
+    }
+    if (Object.hasOwn(changes, "imageUrl")) {
+      if (changes.imageUrl !== null && typeof changes.imageUrl !== "string") {
+        return { error: "INVALID_IMAGE" };
+      }
+      fields.push("image_url = ?");
+      params.push(changes.imageUrl);
+    }
+
+    if (fields.length === 0) return { error: "NO_CHANGES" };
+    fields.push("updated_at = ?");
+    params.push(now, recipeId);
+    db.prepare(`UPDATE recipes SET ${fields.join(", ")} WHERE id = ?`).run(...params);
+    if (userId) addToHistory(userId, recipeId, "updated");
+    return { recipe: getRecipe(recipeId, userId, isAdmin) };
+  }
+
+  // Replace the recipe's Instagram source links. Links already attached to a
+  // different recipe are rejected so a link never points at two recipes.
+  function updateRecipeSources(recipeId, urls, userId = null, isAdmin = false) {
+    const row = recipeById.get(recipeId);
+    if (!row) return { error: "NOT_FOUND" };
+    if (!Array.isArray(urls)) return { error: "INVALID_LINK" };
+
+    const now = new Date().toISOString();
+    const seen = new Set();
+    const links = [];
+    for (const url of urls) {
+      if (typeof url !== "string" || !url.trim()) return { error: "INVALID_LINK" };
+      if (seen.has(url)) continue;
+      seen.add(url);
+      links.push(url);
+    }
+
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const link of links) {
+        const clash = db
+          .prepare("SELECT recipe_id FROM recipe_sources WHERE url = ? AND recipe_id != ?")
+          .get(link, recipeId);
+        if (clash) {
+          db.exec("ROLLBACK");
+          return { error: "LINK_IN_USE" };
+        }
+      }
+      db.prepare("DELETE FROM recipe_sources WHERE recipe_id = ?").run(recipeId);
+      for (const link of links) {
+        db.prepare("INSERT INTO recipe_sources (url, recipe_id, created_at) VALUES (?, ?, ?)")
+          .run(link, recipeId, now);
+      }
+      db.prepare("UPDATE recipes SET updated_at = ? WHERE id = ?").run(now, recipeId);
+      const recipe = getRecipe(recipeId, userId, isAdmin);
+      db.exec("COMMIT");
+      if (userId) addToHistory(userId, recipeId, "updated");
+      return { recipe };
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   function saveImported(url, recipe, userId, isAdmin = false) {
     const samples = buildNutritionIndex();
     const enrichedIngredients = enrichIngredients(recipe.ingredients, samples);
@@ -1760,6 +1894,8 @@ export function createRecipeStore(
     resendPasswordResetCode,
     deleteRecipe,
     updateIngredient,
+    updateRecipe,
+    updateRecipeSources,
     getBySource,
     getRecipe,
     getRecipeOwner,

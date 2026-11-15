@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -1421,5 +1421,171 @@ test("failed text normalization stays in the backlog and can be retried", async 
   } finally {
     await stopServer(server);
     cleanup();
+  }
+});
+
+test("any signed-in user can edit recipe fields, steps, and links", async () => {
+  const { store, cleanup } = createTestStore();
+  const { server, baseUrl } = await startServer(store);
+
+  try {
+    await createVerifiedUser(baseUrl, "edit-owner@example.com");
+    const owner = store.getUserByEmail("edit-owner@example.com");
+    store.saveImported("https://www.instagram.com/p/EDITTEST1/", recipe, owner.id);
+    const original = store.getBySource("https://www.instagram.com/p/EDITTEST1/", owner.id, false);
+    assert.ok(original);
+    const recipeId = original.id;
+
+    const editor = await createVerifiedUser(baseUrl, "edit-editor@example.com");
+
+    const anonymous = await request(baseUrl, `/api/recipes/${recipeId}`, {
+      method: "PATCH",
+      body: { title: "New title" },
+    });
+    assert.equal(anonymous.status, 401);
+
+    const patched = await request(baseUrl, `/api/recipes/${recipeId}`, {
+      method: "PATCH",
+      token: editor.token,
+      body: {
+        title: "Edited Lemon Pasta",
+        description: "Edited by another user.",
+        steps: ["Boil water.", "Cook pasta.", "Toss with lemon."],
+        prepTimeMinutes: 30,
+        basePortions: 2,
+      },
+    });
+    assert.equal(patched.status, 200);
+    const patchedBody = await patched.json();
+    assert.equal(patchedBody.recipe.title, "Edited Lemon Pasta");
+    assert.equal(patchedBody.recipe.steps.length, 3);
+    assert.deepEqual(patchedBody.recipe.sourceUrls, ["https://www.instagram.com/p/EDITTEST1/"]);
+
+    // The title change keeps the source-based dedupe intact.
+    assert.ok(store.getBySource("https://www.instagram.com/p/EDITTEST1/", owner.id, false));
+
+    const invalid = await request(baseUrl, `/api/recipes/${recipeId}`, {
+      method: "PATCH",
+      token: editor.token,
+      body: { steps: [] },
+    });
+    assert.equal(invalid.status, 400);
+
+    // Replace links.
+    const linked = await request(baseUrl, `/api/recipes/${recipeId}`, {
+      method: "PATCH",
+      token: editor.token,
+      body: { sourceUrls: ["https://www.instagram.com/p/EDITTEST2/"] },
+    });
+    assert.equal(linked.status, 200);
+    assert.deepEqual((await linked.json()).recipe.sourceUrls, ["https://www.instagram.com/p/EDITTEST2/"]);
+
+    // Remove all links.
+    const unlinked = await request(baseUrl, `/api/recipes/${recipeId}`, {
+      method: "PATCH",
+      token: editor.token,
+      body: { sourceUrls: [] },
+    });
+    assert.equal(unlinked.status, 200);
+    assert.deepEqual((await unlinked.json()).recipe.sourceUrls, []);
+  } finally {
+    await stopServer(server);
+    cleanup();
+  }
+});
+
+test("editing rejects links already attached to another recipe", async () => {
+  const { store, cleanup } = createTestStore();
+  const { server, baseUrl } = await startServer(store);
+
+  try {
+    await createVerifiedUser(baseUrl, "dup-owner@example.com");
+    const owner = store.getUserByEmail("dup-owner@example.com");
+    store.saveImported("https://www.instagram.com/p/DUPLINK1/", recipe, owner.id);
+    store.saveImported("https://www.instagram.com/p/DUPLINK2/", { ...recipe, title: "Second Dish" }, owner.id);
+    const first = store.getBySource("https://www.instagram.com/p/DUPLINK1/", owner.id, false);
+    const second = store.getBySource("https://www.instagram.com/p/DUPLINK2/", owner.id, false);
+
+    const editor = await createVerifiedUser(baseUrl, "dup-editor@example.com");
+    const conflict = await request(baseUrl, `/api/recipes/${first.id}`, {
+      method: "PATCH",
+      token: editor.token,
+      body: { sourceUrls: ["https://www.instagram.com/p/DUPLINK2/"] },
+    });
+    assert.equal(conflict.status, 400);
+    assert.match((await conflict.json()).error, /already belongs/);
+
+    // Non-Instagram links are rejected.
+    const bad = await request(baseUrl, `/api/recipes/${first.id}`, {
+      method: "PATCH",
+      token: editor.token,
+      body: { sourceUrls: ["https://example.com/post/123/"] },
+    });
+    assert.equal(bad.status, 400);
+    void second;
+  } finally {
+    await stopServer(server);
+    cleanup();
+  }
+});
+
+test("uploads and removes a recipe image", async () => {
+  const { store, cleanup } = createTestStore();
+  const mediaDir = mkdtempSync(join(tmpdir(), "recipetor-media-"));
+  const { server, baseUrl } = await startServer(store, { mediaDir });
+
+  try {
+    await createVerifiedUser(baseUrl, "img-owner@example.com");
+    const owner = store.getUserByEmail("img-owner@example.com");
+    store.saveImported("https://www.instagram.com/p/IMGTEST1/", recipe, owner.id);
+    const target = store.getBySource("https://www.instagram.com/p/IMGTEST1/", owner.id, false);
+
+    const editor = await createVerifiedUser(baseUrl, "img-editor@example.com");
+
+    const anonymous = await fetch(`${baseUrl}/api/recipes/${target.id}/image`, {
+      method: "POST",
+      headers: { "Content-Type": "image/png", Origin: baseUrl },
+      body: Buffer.from([1, 2, 3, 4]),
+    });
+    assert.equal(anonymous.status, 401);
+
+    const png = Buffer.from(
+      "89504e470d0a1a0a0000000d494844520000000100000001080600000" +
+        "01f15c4890000000d4944415478da63fcffff3f030005fe02fea72d" +
+        "67250000000049454e44ae426082",
+      "hex",
+    );
+    const upload = await fetch(`${baseUrl}/api/recipes/${target.id}/image`, {
+      method: "POST",
+      headers: { "Content-Type": "image/png", Origin: baseUrl, Authorization: `Bearer ${editor.token}` },
+      body: png,
+    });
+    assert.equal(upload.status, 200);
+    const uploaded = await upload.json();
+    assert.match(uploaded.recipe.imageUrl, /\/media\/.+\.png$/);
+    const filename = uploaded.recipe.imageUrl.replace("/media/", "");
+    assert.ok(existsSync(join(mediaDir, filename)));
+
+    const served = await fetch(`${baseUrl}${uploaded.recipe.imageUrl}`);
+    assert.equal(served.status, 200);
+
+    const wrongType = await fetch(`${baseUrl}/api/recipes/${target.id}/image`, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain", Origin: baseUrl, Authorization: `Bearer ${editor.token}` },
+      body: "nope",
+    });
+    assert.equal(wrongType.status, 415);
+
+    const removed = await request(baseUrl, `/api/recipes/${target.id}`, {
+      method: "PATCH",
+      token: editor.token,
+      body: { imageUrl: null },
+    });
+    assert.equal(removed.status, 200);
+    assert.equal((await removed.json()).recipe.imageUrl, null);
+  } finally {
+    await stopServer(server);
+    cleanup();
+    rmSync(mediaDir, { recursive: true, force: true });
   }
 });

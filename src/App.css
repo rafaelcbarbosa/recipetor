@@ -1352,6 +1352,90 @@ button.queue-row {
   white-space: nowrap;
 }
 
+.edit-image {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.edit-image img {
+  width: 88px;
+  height: 88px;
+  flex: none;
+  border-radius: 16px;
+  object-fit: cover;
+}
+
+.edit-image-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 88px;
+  height: 88px;
+  flex: none;
+  border-radius: 16px;
+  background: var(--canvas);
+  color: var(--muted);
+}
+
+.edit-image-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.edit-image-actions .secondary-btn,
+.edit-image-actions .primary-btn {
+  height: 44px;
+}
+
+.edit-upload-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.edit-link-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.edit-link-row a {
+  flex: 1;
+  overflow: hidden;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  color: var(--ink);
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.edit-link-add {
+  display: flex;
+  gap: 8px;
+}
+
+.edit-link-add input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 22px;
+  background: var(--field);
+  font-size: 15px;
+  outline: none;
+}
+
+.edit-link-add .secondary-btn {
+  height: 44px;
+  flex: none;
+}
+
 .sheet-backdrop {
   position: fixed;
   inset: 0;
