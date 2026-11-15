@@ -6,6 +6,7 @@ import { validateRecipeResult } from "./recipe-schema.js";
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const DEFAULT_MEDIA_DIR = resolve(ROOT, "data/media");
 const DEFAULT_TIMEOUT_MS = 16 * 60 * 1000;
+const DEFAULT_NORMALIZE_TIMEOUT_MS = 3 * 60 * 1000;
 const DEFAULT_POLL_MS = 1000;
 
 function envBool(name, fallback) {
@@ -201,6 +202,72 @@ export async function isHttpExtractorAvailable({
   } catch {
     return false;
   }
+}
+
+/**
+ * Normalize recipe text pasted by a user into the app schema.
+ *
+ * This calls the extractor's synchronous `/normalize` endpoint. The text model
+ * can take a minute on a long recipe, so the default timeout is much longer than
+ * the app's normal request timeout.
+ */
+export async function normalizeRecipeText(
+  text,
+  {
+    baseUrl = process.env.RECIPE_EXTRACTOR_URL || "",
+    token = process.env.RECIPE_EXTRACTOR_TOKEN || "",
+    timeoutMs = envNumber("RECIPE_EXTRACTOR_NORMALIZE_TIMEOUT_MS", DEFAULT_NORMALIZE_TIMEOUT_MS),
+    computeNutrition = envBool("RECIPE_EXTRACTOR_COMPUTE_NUTRITION", true),
+  } = {},
+) {
+  if (!baseUrl) throw extractorError("The recipe extractor is not configured.");
+  if (!token) throw extractorError("The recipe extractor is not configured correctly.");
+
+  let response;
+  try {
+    response = await fetch(endpointFor(baseUrl, "/normalize"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Token": token,
+      },
+      body: JSON.stringify({ text, compute_nutrition: computeNutrition }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    if (error?.name === "TimeoutError") {
+      throw extractorError("The recipe normalizer timed out. Try again.");
+    }
+    throw extractorError("The recipe extractor is unavailable.");
+  }
+
+  if (response.status === 401) {
+    throw extractorError("The recipe extractor is not configured correctly.");
+  }
+
+  const payload = await response.json().catch(() => null);
+
+  if (response.status === 404) {
+    throw extractorError("The recipe extractor is out of date. Try again later.");
+  }
+  if (response.status === 429) {
+    throw extractorError("The recipe normalizer is busy. Try again in a minute.");
+  }
+  if (payload?.error_code === "NO_RECIPE") {
+    throw extractorError(
+      "That text doesn't look like a complete recipe. Add ingredients and steps and try again.",
+    );
+  }
+  if (response.status === 400) {
+    throw extractorError(payload?.detail || payload?.error || "The recipe text is invalid.");
+  }
+  if (!response.ok) {
+    throw friendlyError(payload);
+  }
+
+  const recipe = payload?.recipe;
+  if (!recipe) throw extractorError("The recipe extractor returned an invalid response.");
+  return validateRecipeResult(recipe);
 }
 
 /**

@@ -313,7 +313,9 @@ function toRecipe(row, sourceRows, userId = null, isAdmin = false) {
     steps: JSON.parse(row.steps_json),
     totals,
     nutritionPerPortion: totals,
-    source: sourceUrls.length > 1 ? `${sourceUrls.length} Instagram sources` : "Instagram",
+    source: sourceUrls.length === 0
+      ? null
+      : sourceUrls.length > 1 ? `${sourceUrls.length} Instagram sources` : "Instagram",
     sourceUrls,
     sourcePosts: sourceUrls,
     sourceCount: sourceUrls.length,
@@ -1445,7 +1447,9 @@ export function createRecipeStore(
 
     db.exec("BEGIN IMMEDIATE");
     try {
-      const source = db.prepare("SELECT recipe_id FROM recipe_sources WHERE url = ?").get(url);
+      const source = url
+        ? db.prepare("SELECT recipe_id FROM recipe_sources WHERE url = ?").get(url)
+        : null;
       if (source) {
         const existing = getRecipe(source.recipe_id, userId, isAdmin);
         if (userId && addFavorite(userId, source.recipe_id)) addToHistory(userId, source.recipe_id, "added");
@@ -1464,8 +1468,10 @@ export function createRecipeStore(
 
       if (match) {
         const facets = mergeRecipeFacets(match, enrichedRecipe);
-        db.prepare("INSERT INTO recipe_sources (url, recipe_id, created_at) VALUES (?, ?, ?)")
-          .run(url, match.id, now);
+        if (url) {
+          db.prepare("INSERT INTO recipe_sources (url, recipe_id, created_at) VALUES (?, ?, ?)")
+            .run(url, match.id, now);
+        }
         db.prepare(`
           UPDATE recipes
           SET updated_at = ?, cuisine = ?, meal_types_json = ?, diet_tags_json = ?, custom_tags_json = ?, image_url = ?
@@ -1518,8 +1524,10 @@ export function createRecipeStore(
         now,
         now,
       );
-      db.prepare("INSERT INTO recipe_sources (url, recipe_id, created_at) VALUES (?, ?, ?)")
-        .run(url, id, now);
+      if (url) {
+        db.prepare("INSERT INTO recipe_sources (url, recipe_id, created_at) VALUES (?, ?, ?)")
+          .run(url, id, now);
+      }
       const saved = getRecipe(id, userId, isAdmin);
       
       // Auto-favorite and add to history for the user who added the recipe

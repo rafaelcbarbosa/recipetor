@@ -89,6 +89,7 @@ Endpoints:
 | --- | --- | --- | --- |
 | `GET` | `/healthz` | no | liveness + config |
 | `POST` | `/jobs` | `X-API-Token` | queue an extraction, returns `{job_id}` |
+| `POST` | `/normalize` | `X-API-Token` | normalize pasted recipe text, returns `{recipe}` (or `NO_RECIPE`) |
 | `GET` | `/jobs/{id}` | `X-API-Token` | status, `stage`, `progress`, `label`, recipe |
 | `GET` | `/thumbnails/{id}.jpg` | no | cached 480 px JPEG |
 | `POST` | `/extract` | `X-API-Token` | synchronous compatibility endpoint |
@@ -130,6 +131,7 @@ RECIPE_EXTRACTOR_URL=http://192.168.1.190:8099
 RECIPE_EXTRACTOR_TOKEN=<same value as RECIPE_API_TOKEN>
 RECIPE_EXTRACTOR_COMPUTE_NUTRITION=1
 RECIPE_EXTRACTOR_TIMEOUT_MS=900000
+RECIPE_EXTRACTOR_NORMALIZE_TIMEOUT_MS=180000
 RECIPETOR_MEDIA_DIR=./data/media
 ```
 
@@ -196,6 +198,7 @@ local to that host.
 - Failures stay in the queue for 24h, one row per link, then disappear. A failure row disappears immediately once its link has a recipe.
 - Completed jobs are never shown in the queue. The Library updates automatically and a toast announces the new recipe.
 - Failed rows offer manual entry to the creator/watchers. A manual recipe attaches the failed link as a source and is favorited/historied for the entrant and all watchers.
+- Free-text entry (Add tab → Paste text): signed-in users paste recipe text, the app normalizes it with AI (`POST /api/recipes/text/normalize`), shows a preview, and saves on confirmation (`POST /api/recipes/text`). Text recipes get no source URL; they still dedupe by title/ingredients, are auto-favorited, and record a `text_entry` usage event. Normalization uses the same free text model as link extraction; the app allows up to 3 minutes for it.
 - Failed extractions keep the post screenshot when the extractor captured one. The queue exposes the full post link and the screenshot so the user can identify the post.
 - Deletion: the admin can delete any recipe; the original loader can delete their own.
 
@@ -208,6 +211,8 @@ Relevant API routes:
 | `GET` | `/api/recipes/import/status/:id` | Job status and live progress |
 | `POST` | `/api/recipes/import/retry/:id` | Retry a failed job (creator/watchers) |
 | `POST` | `/api/recipes/manual` | Save a manual recipe for a failed job |
+| `POST` | `/api/recipes/text/normalize` | Signed-in only: normalize pasted recipe text with AI (no save) |
+| `POST` | `/api/recipes/text` | Signed-in only: save an AI-normalized text recipe (no source URL) |
 | `POST` | `/api/events/app-open` | Usage event: app opened |
 | `POST` | `/api/events/recipe-view` | Usage event: recipe detail opened |
 | `GET` | `/api/telemetry` | Admin-only telemetry data |

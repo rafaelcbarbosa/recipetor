@@ -395,6 +395,11 @@ class ExtractRequest(BaseModel):
     compute_nutrition: bool | None = None
 
 
+class NormalizeRequest(BaseModel):
+    text: str
+    compute_nutrition: bool | None = None
+
+
 @app.get("/healthz")
 async def healthz() -> dict:
     return {
@@ -461,6 +466,63 @@ async def extract(
         response.headers["X-Thumbnail-URL"] = f"{base}/thumbnails/{thumb_id}.jpg"
         response.headers["X-Thumbnail-Id"] = thumb_id
     return response
+
+
+@app.post("/normalize")
+async def normalize(
+    body: NormalizeRequest,
+    _: None = Depends(require_token),
+):
+    """Normalize recipe text pasted by a user into the app schema."""
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Recipe text is empty.")
+    if len(text) > rx.TEXT_MAX_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Recipe text exceeds {rx.TEXT_MAX_CHARS} characters.",
+        )
+
+    compute_nutrition = (
+        COMPUTE_NUTRITION if body.compute_nutrition is None else body.compute_nutrition
+    )
+
+    try:
+        await asyncio.wait_for(_semaphore.acquire(), timeout=QUEUE_TIMEOUT)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=429, detail="server busy; retry later")
+
+    try:
+        recipe = await asyncio.wait_for(
+            run_in_threadpool(
+                rx.normalize_recipe_text,
+                text,
+                model=MODEL,
+                base_url=BASE_URL,
+                compute_nutrition=compute_nutrition,
+                verbose=VERBOSE,
+            ),
+            timeout=JOB_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="recipe normalization timed out")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)[:500]) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)[:500]) from exc
+    finally:
+        _semaphore.release()
+
+    if isinstance(recipe, dict) and recipe.get("error"):
+        code = str(recipe.get("error"))
+        return JSONResponse(
+            status_code=422 if code == "NO_RECIPE" else 502,
+            content={
+                "error": str(recipe.get("message") or "Could not normalize this text.")[:500],
+                "error_code": code,
+            },
+        )
+    return {"recipe": recipe}
 
 
 @app.get("/thumbnails/{thumb_id}.jpg")

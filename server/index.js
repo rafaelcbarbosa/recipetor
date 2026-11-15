@@ -4,12 +4,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRecipeStore } from "./recipe-store.js";
-import { createHttpExtractor, isHttpExtractorAvailable, useHttpExtractor } from "./http-extractor.js";
+import { createHttpExtractor, isHttpExtractorAvailable, normalizeRecipeText, useHttpExtractor } from "./http-extractor.js";
 import { validateRecipeResult } from "./recipe-schema.js";
 import { createScriptExtractor, isScriptAvailable } from "./script-extractor.js";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const MAX_REQUEST_BYTES = 2048;
+const MAX_TEXT_REQUEST_BYTES = 32 * 1024;
+const MAX_RECIPE_TEXT_CHARS = 12_000;
 const IMPORT_LIMIT = 10;
 const IMPORT_WINDOW_MS = 60 * 60 * 1000;
 const JWT_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -160,12 +162,12 @@ function jsonResponse(response, status, value) {
   response.end(JSON.stringify(value));
 }
 
-async function readJson(request) {
+async function readJson(request, maxBytes = MAX_REQUEST_BYTES) {
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > MAX_REQUEST_BYTES) throw new HttpError(413, "Request is too large.");
+    if (size > maxBytes) throw new HttpError(413, "Request is too large.");
     chunks.push(chunk);
   }
 
@@ -280,6 +282,7 @@ const DEFAULT_MEDIA_DIR = resolve(ROOT, "data/media");
 export function createServer({
   store,
   extractRecipe = defaultExtractor.extractRecipe,
+  normalizeRecipe = normalizeRecipeText,
   extractorAvailable = defaultExtractor.extractorAvailable,
   extractorBackend = defaultExtractor.backend,
   mediaDir = resolve(process.env.RECIPETOR_MEDIA_DIR || DEFAULT_MEDIA_DIR),
@@ -641,6 +644,67 @@ export function createServer({
       if (result.error === "FORBIDDEN") return jsonResponse(response, 403, { error: "Only the job's owner or watchers can retry it." });
       enqueueJob(result.job.id, store.getExtractionJob(result.job.id).url, userId);
       return jsonResponse(response, 202, { job: result.job });
+    }
+
+    // Normalize recipe text pasted by the user (no save yet).
+    if (pathname === "/api/recipes/text/normalize" && request.method === "POST") {
+      checkSameOrigin(request);
+      const userId = extractUserId(request);
+      if (!userId) return jsonResponse(response, 401, { error: "Authentication required." });
+
+      checkImportRateLimit(request);
+
+      const body = await readJson(request, MAX_TEXT_REQUEST_BYTES);
+      const text = typeof body?.text === "string" ? body.text.trim() : "";
+      if (!text) return jsonResponse(response, 400, { error: "Paste a recipe first." });
+      if (text.length > MAX_RECIPE_TEXT_CHARS) {
+        return jsonResponse(response, 400, {
+          error: `Recipe text must be under ${MAX_RECIPE_TEXT_CHARS.toLocaleString("en-US")} characters.`,
+        });
+      }
+
+      try {
+        const recipe = await normalizeRecipe(text);
+        return jsonResponse(response, 200, { recipe });
+      } catch (error) {
+        return jsonResponse(response, 422, {
+          error: error instanceof Error ? error.message : "Couldn't normalize that recipe.",
+        });
+      }
+    }
+
+    // Save an AI-normalized recipe from pasted text (no source URL).
+    if (pathname === "/api/recipes/text" && request.method === "POST") {
+      checkSameOrigin(request);
+      const userId = extractUserId(request);
+      if (!userId) return jsonResponse(response, 401, { error: "Authentication required." });
+
+      const body = await readJson(request, MAX_TEXT_REQUEST_BYTES);
+      const payload = body?.recipe;
+      if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+        // The preview comes back from the schema validator with `steps`; the
+        // validator accepts `instructions`.
+        if (!payload.instructions && Array.isArray(payload.steps)) {
+          payload.instructions = payload.steps;
+        }
+      }
+
+      let recipe;
+      try {
+        recipe = validateRecipeResult(payload);
+      } catch (error) {
+        return jsonResponse(response, 400, {
+          error: error instanceof Error ? error.message : "The recipe is invalid.",
+        });
+      }
+
+      const saved = store.saveImported(null, recipe, userId, isAdminRequest(request));
+      store.recordEvent(userId, "text_entry", saved.recipe.id);
+      return jsonResponse(response, 200, {
+        recipe: store.getRecipe(saved.recipe.id, userId, isAdminRequest(request)),
+        duplicate: Boolean(saved.duplicate),
+        reason: saved.reason,
+      });
     }
 
     // Save a manually entered recipe for a failed job, attaching its link.

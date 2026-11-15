@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createHttpExtractor, isHttpExtractorAvailable } from "./http-extractor.js";
+import { createHttpExtractor, isHttpExtractorAvailable, normalizeRecipeText } from "./http-extractor.js";
 
 const recipe = {
   title: "Remote recipe",
@@ -234,4 +234,61 @@ test("keeps the thumbnail when a remote job fails", async () => {
     await new Promise((resolvePromise) => server.close(resolvePromise));
     rmSync(mediaDir, { recursive: true, force: true });
   }
+});
+
+test("normalizeRecipeText posts to /normalize and validates the recipe", async () => {
+  let body = null;
+  let token = null;
+  const { server, baseUrl } = await startMock((request, response) => {
+    if (request.url === "/normalize" && request.method === "POST") {
+      token = request.headers["x-api-token"];
+      let raw = "";
+      request.on("data", (chunk) => {
+        raw += chunk;
+      });
+      request.on("end", () => {
+        body = JSON.parse(raw);
+        sendJson(response, 200, { recipe });
+      });
+      return;
+    }
+    response.writeHead(404);
+    response.end();
+  });
+
+  try {
+    const recipe = await normalizeRecipeText("Ingredients: flour", {
+      baseUrl,
+      token: "secret-token",
+      computeNutrition: true,
+    });
+    assert.equal(recipe.title, "Remote recipe");
+    assert.equal(token, "secret-token");
+    assert.equal(body.compute_nutrition, true);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("normalizeRecipeText maps NO_RECIPE and offline errors", async () => {
+  const { server, baseUrl } = await startMock((request, response) => {
+    sendJson(response, 422, {
+      error: "no recipe",
+      error_code: "NO_RECIPE",
+    });
+  });
+
+  try {
+    await assert.rejects(
+      () => normalizeRecipeText("nonsense", { baseUrl, token: "t" }),
+      /complete recipe/,
+    );
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+
+  await assert.rejects(
+    () => normalizeRecipeText("text", { baseUrl: "http://127.0.0.1:9", token: "t" }),
+    /unavailable/,
+  );
 });
