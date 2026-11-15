@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { createServer } from "./index.js";
+import { validateRecipeResult } from "./recipe-schema.js";
 import { createRecipeStore } from "./recipe-store.js";
 
 const recipe = {
@@ -1199,7 +1200,8 @@ test("queues pasted recipe text and normalizes it through the backlog", async ()
   const { server, baseUrl } = await startServer(store, {
     normalizeRecipe: async (text) => {
       receivedText = text;
-      return {
+      // normalizeRecipeText validates and returns this shape.
+      return validateRecipeResult({
         title: "Normalized Recipe",
         description: "",
         category: "Dinner",
@@ -1211,7 +1213,7 @@ test("queues pasted recipe text and normalizes it through the backlog", async ()
         ingredients: recipe.ingredients,
         instructions: recipe.steps,
         totals: recipe.totals,
-      };
+      });
     },
   });
 
@@ -1263,6 +1265,46 @@ test("queues pasted recipe text and normalizes it through the backlog", async ()
   }
 });
 
+test("accepts the real normalizer output shape (steps, no instructions)", async () => {
+  const { store, cleanup } = createTestStore();
+  const { server, baseUrl } = await startServer(store, {
+    normalizeRecipe: async () => {
+      // normalizeRecipeText already validates and returns this exact shape.
+      return validateRecipeResult({
+        title: "Real Shape Recipe",
+        description: "",
+        category: "Dinner",
+        cuisine: "",
+        mealTypes: ["Dinner"],
+        dietTags: [],
+        prepTimeMinutes: null,
+        basePortions: 2,
+        ingredients: recipe.ingredients,
+        instructions: recipe.steps,
+        totals: recipe.totals,
+      });
+    },
+  });
+
+  try {
+    const user = await createVerifiedUser(baseUrl, "text-shape@example.com");
+    const response = await request(baseUrl, "/api/recipes/import/text", {
+      method: "POST",
+      token: user.token,
+      body: { text: "Ingredients: 2 cups flour" },
+    });
+    assert.equal(response.status, 202);
+    const jobs = await waitForJobs(store, 1);
+    assert.equal(jobs[0].status, "completed");
+    const library = await request(baseUrl, "/api/recipes", { token: user.token });
+    const { recipes: libraryRecipes } = await library.json();
+    assert.ok(libraryRecipes.some((item) => item.title === "Real Shape Recipe"));
+  } finally {
+    await stopServer(server);
+    cleanup();
+  }
+});
+
 test("retries a transient normalization failure and records each attempt", async () => {
   const { store, cleanup } = createTestStore();
   let attempts = 0;
@@ -1272,7 +1314,7 @@ test("retries a transient normalization failure and records each attempt", async
       if (attempts === 1) {
         throw new Error("The recipe extractor returned invalid cooking instructions.");
       }
-      return {
+      return validateRecipeResult({
         title: "Retry Recipe",
         description: "",
         category: "Dinner",
@@ -1284,7 +1326,7 @@ test("retries a transient normalization failure and records each attempt", async
         ingredients: recipe.ingredients,
         instructions: recipe.steps,
         totals: recipe.totals,
-      };
+      });
     },
   });
 

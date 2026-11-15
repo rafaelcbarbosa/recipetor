@@ -325,15 +325,17 @@ export function createServer({
           if (isTextJob) {
             const sourceText = store.getExtractionJob(jobId)?.sourceText ?? "";
             // The model is nondeterministic: a response can fail validation one
-            // run and pass the next. Retry schema-shaped failures once and keep
+            // run and pass the next. Retry transient failures once and keep
             // every attempt in the job logs so failures are never silent.
+            // normalizeRecipe already validates the recipe and returns the
+            // normalized shape (`steps`), so it must not be validated again.
             for (let attempt = 1; attempt <= 2 && !extracted; attempt += 1) {
               try {
-                extracted = validateRecipeResult(await normalizeRecipe(sourceText));
+                extracted = await normalizeRecipe(sourceText);
               } catch (error) {
                 const message = error instanceof Error ? error.message : "Unknown error";
                 normalizeLogs.push(`[normalize] attempt ${attempt} failed: ${message}`);
-                const transient = /^The recipe extractor returned /.test(message);
+                const transient = /^(The recipe extractor returned|Could not parse)/.test(message);
                 if (attempt === 2 || !transient) {
                   if (attempt === 1) {
                     normalizeLogs.push(`[normalize] not retrying: ${message}`);
