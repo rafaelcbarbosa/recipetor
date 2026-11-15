@@ -1244,6 +1244,7 @@ test("queues pasted recipe text and normalizes it through the backlog", async ()
     const jobs = await waitForJobs(store, 1);
     assert.equal(jobs[0].status, "completed");
     assert.equal(jobs[0].recipeId, queued.job.recipeId ?? jobs[0].recipeId);
+    assert.match(store.getExtractionLogs(jobs[0].id) ?? "", /normalized successfully/);
 
     // Same text returns the saved recipe instead of re-running the AI.
     const again = await request(baseUrl, "/api/recipes/import/text", {
@@ -1256,6 +1257,81 @@ test("queues pasted recipe text and normalizes it through the backlog", async ()
     assert.equal(saved.duplicate, true);
     assert.equal(saved.recipe.title, "Normalized Recipe");
     assert.deepEqual(saved.recipe.sourceUrls, []);
+  } finally {
+    await stopServer(server);
+    cleanup();
+  }
+});
+
+test("retries a transient normalization failure and records each attempt", async () => {
+  const { store, cleanup } = createTestStore();
+  let attempts = 0;
+  const { server, baseUrl } = await startServer(store, {
+    normalizeRecipe: async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new Error("The recipe extractor returned invalid cooking instructions.");
+      }
+      return {
+        title: "Retry Recipe",
+        description: "",
+        category: "Dinner",
+        cuisine: "",
+        mealTypes: ["Dinner"],
+        dietTags: [],
+        prepTimeMinutes: null,
+        basePortions: 2,
+        ingredients: recipe.ingredients,
+        instructions: recipe.steps,
+        totals: recipe.totals,
+      };
+    },
+  });
+
+  try {
+    const user = await createVerifiedUser(baseUrl, "text-retry@example.com");
+    const response = await request(baseUrl, "/api/recipes/import/text", {
+      method: "POST",
+      token: user.token,
+      body: { text: "Ingredients: 2 cups flour" },
+    });
+    assert.equal(response.status, 202);
+    const jobs = await waitForJobs(store, 1);
+    assert.equal(jobs[0].status, "completed");
+    assert.equal(attempts, 2);
+    const logs = store.getExtractionLogs(jobs[0].id) ?? "";
+    assert.match(logs, /attempt 1 failed: The recipe extractor returned invalid cooking instructions/);
+    assert.match(logs, /normalized successfully/);
+  } finally {
+    await stopServer(server);
+    cleanup();
+  }
+});
+
+test("does not retry a permanent normalization verdict", async () => {
+  const { store, cleanup } = createTestStore();
+  let attempts = 0;
+  const { server, baseUrl } = await startServer(store, {
+    normalizeRecipe: async () => {
+      attempts += 1;
+      throw new Error("That text doesn't look like a complete recipe.");
+    },
+  });
+
+  try {
+    const user = await createVerifiedUser(baseUrl, "text-noretry@example.com");
+    const response = await request(baseUrl, "/api/recipes/import/text", {
+      method: "POST",
+      token: user.token,
+      body: { text: "just an ingredient list" },
+    });
+    assert.equal(response.status, 202);
+    const jobs = await waitForJobs(store, 1);
+    assert.equal(jobs[0].status, "failed");
+    assert.equal(attempts, 1);
+    const logs = store.getExtractionLogs(jobs[0].id) ?? "";
+    assert.match(logs, /attempt 1 failed/);
+    assert.match(logs, /not retrying/);
   } finally {
     await stopServer(server);
     cleanup();

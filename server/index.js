@@ -319,11 +319,31 @@ export function createServer({
         }
 
         store.updateExtractionJob(jobId, { status: "processing", stage: "extracting", progress: 30, stageLabel: isTextJob ? "Normalizing recipe" : "Extracting recipe" });
+        const normalizeLogs = [];
         let extracted;
         try {
           if (isTextJob) {
             const sourceText = store.getExtractionJob(jobId)?.sourceText ?? "";
-            extracted = validateRecipeResult(await normalizeRecipe(sourceText));
+            // The model is nondeterministic: a response can fail validation one
+            // run and pass the next. Retry schema-shaped failures once and keep
+            // every attempt in the job logs so failures are never silent.
+            for (let attempt = 1; attempt <= 2 && !extracted; attempt += 1) {
+              try {
+                extracted = validateRecipeResult(await normalizeRecipe(sourceText));
+              } catch (error) {
+                const message = error instanceof Error ? error.message : "Unknown error";
+                normalizeLogs.push(`[normalize] attempt ${attempt} failed: ${message}`);
+                const transient = /^The recipe extractor returned /.test(message);
+                if (attempt === 2 || !transient) {
+                  if (attempt === 1) {
+                    normalizeLogs.push(`[normalize] not retrying: ${message}`);
+                  }
+                  throw error;
+                }
+                console.warn(`[queue] Job ${jobId}: normalization attempt ${attempt} failed (${message}); retrying`);
+              }
+            }
+            normalizeLogs.push("[normalize] normalized successfully");
           } else {
             extracted = await extractRecipe(url, {
               onProgress: ({ stage, progress, label }) => {
@@ -351,6 +371,7 @@ export function createServer({
             progress: 100,
             stageLabel: null,
             errorMessage: `Extraction failed: ${errorMsg}`,
+            ...(normalizeLogs.length > 0 ? { logs: normalizeLogs.join("\n") } : {}),
             ...(thumbnailUrl ? { thumbnailUrl } : {}),
             ...(extractionLogs ? { logs: extractionLogs } : {}),
           });
@@ -363,7 +384,9 @@ export function createServer({
         const extractionLogs =
           extracted && typeof extracted === "object" && typeof extracted.extractorLogs === "string"
             ? extracted.extractorLogs
-            : null;
+            : normalizeLogs.length > 0
+              ? normalizeLogs.join("\n")
+              : null;
         const saved = store.saveImported(isTextJob ? null : url, extracted, userId);
         store.recordEvent(userId, isTextJob ? "text_entry" : "import", saved.recipe.id);
         console.log(`[queue] Job ${jobId}: Recipe saved: ${saved.recipe.id}, duplicate: ${saved.duplicate}`);
