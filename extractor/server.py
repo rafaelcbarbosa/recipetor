@@ -54,6 +54,8 @@ MODEL = os.getenv("RECIPE_MODEL", "beam-free")
 BASE_URL = os.getenv("RECIPE_BASE_URL", "https://opencode.ai/zen/go/v1")
 VISION_MODEL = os.getenv("RECIPE_VISION_MODEL", "deepseek-v4.1-flash-free")
 VISION_BASE_URL = os.getenv("RECIPE_VISION_BASE_URL", "https://opencode.ai/zen/v1")
+VISION_FALLBACK_MODEL = os.getenv("RECIPE_VISION_FALLBACK_MODEL", "deepseek-v4.1-flash")
+VISION_FALLBACK_BASE_URL = os.getenv("RECIPE_VISION_FALLBACK_BASE_URL", "https://opencode.ai/zen/go/v1")
 WHISPER_MODEL = os.getenv("RECIPE_WHISPER_MODEL", "small")
 LANGUAGE = os.getenv("RECIPE_LANGUAGE", "pt")
 OCR_LANGS = os.getenv("RECIPE_OCR_LANGS", "por+eng")
@@ -147,6 +149,8 @@ def _extract_command(url: str, compute_nutrition: bool) -> list[str]:
         "--model", MODEL,
         "--vision-model", VISION_MODEL,
         "--vision-base-url", VISION_BASE_URL,
+        "--vision-fallback-model", VISION_FALLBACK_MODEL,
+        "--vision-fallback-base-url", VISION_FALLBACK_BASE_URL,
         "--whisper-model", WHISPER_MODEL,
         "--language", LANGUAGE,
         "--ocr-langs", OCR_LANGS,
@@ -406,6 +410,7 @@ async def healthz() -> dict:
         "status": "ok",
         "model": MODEL,
         "vision_model": VISION_MODEL,
+        "vision_fallback_model": VISION_FALLBACK_MODEL,
         "whisper_model": WHISPER_MODEL,
         "token_configured": bool(API_TOKEN),
         "compute_nutrition_default": COMPUTE_NUTRITION,

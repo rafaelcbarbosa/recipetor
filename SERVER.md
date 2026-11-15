@@ -20,8 +20,12 @@ to a free multimodal model (`RECIPE_VISION_MODEL`, default
 `deepseek-v4.1-flash-free` on `RECIPE_VISION_BASE_URL`, default
 `https://opencode.ai/zen/v1`) so recipe cards, ingredient screenshots, and
 sampled video frames can be read from the images. The text model stays on
-`RECIPE_BASE_URL` (`beam-free` by default). If the vision request is rejected or
-the free quota is exhausted, the extractor retries text-only automatically.
+`RECIPE_BASE_URL` (`beam-free` by default). When the free vision quota is
+exhausted, the extractor retries the images with the paid fallback model
+(`RECIPE_VISION_FALLBACK_MODEL`, default `deepseek-v4.1-flash` on
+`RECIPE_VISION_FALLBACK_BASE_URL`, default the text endpoint) and only falls
+back to text-only if that also fails or the images are rejected. Set
+`RECIPE_VISION_FALLBACK_MODEL=` (empty) to skip the paid fallback.
 
 The extractor can run in two modes:
 

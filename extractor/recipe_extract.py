@@ -1426,17 +1426,28 @@ def _vision_content_parts(
     return parts[:VISION_MAX_TOTAL]
 
 
-def _vision_unavailable(message: str) -> bool:
-    """Whether the vision request failed in a way that should retry text-only."""
+def _vision_quota_exhausted(message: str) -> bool:
+    """Whether the vision request failed because the free quota ran out."""
     lowered = message.lower()
-    if "freeusagelimiterror" in lowered or "free usage limit" in lowered:
-        return True
-    if "llm http 429" in lowered:
-        return True
+    return (
+        "freeusagelimiterror" in lowered
+        or "free usage limit" in lowered
+        or "llm http 429" in lowered
+    )
+
+
+def _vision_rejected(message: str) -> bool:
+    """Whether the vision model refused the request (e.g. images unsupported)."""
+    lowered = message.lower()
     return (
         any(code in lowered for code in ("llm http 400", "llm http 415", "llm http 422"))
         and any(token in lowered for token in ("image", "vision", "multimodal", "content"))
     )
+
+
+def _vision_unavailable(message: str) -> bool:
+    """Whether the vision request failed in a way that should try another tier."""
+    return _vision_quota_exhausted(message) or _vision_rejected(message)
 
 
 def extract_recipe(
@@ -1446,6 +1457,8 @@ def extract_recipe(
     vision_model: str | None = None,
     vision_base_url: str | None = None,
     vision_api_key: str | None = None,
+    vision_fallback_model: str | None = None,
+    vision_fallback_base_url: str | None = None,
     base_url: str = "https://opencode.ai/zen/go/v1",
     api_key: str | None = None,
     whisper_model: str = "small",
@@ -1472,6 +1485,14 @@ def extract_recipe(
         or os.getenv("RECIPE_VISION_BASE_URL", "https://opencode.ai/zen/v1")
     ).rstrip("/")
     vision_key = load_api_key(vision_api_key) if vision_api_key else resolved_key
+    vision_fallback = (
+        vision_fallback_model
+        or os.getenv("RECIPE_VISION_FALLBACK_MODEL", "deepseek-v4.1-flash")
+    ).strip() or None
+    vision_fallback_base = (
+        vision_fallback_base_url
+        or os.getenv("RECIPE_VISION_FALLBACK_BASE_URL", "https://opencode.ai/zen/go/v1")
+    ).rstrip("/")
     if not raw_context and not resolved_key:
         raise RuntimeError(
             "No API key. Set RECIPE_API_KEY or OPENCODE_GO_API_KEY "
@@ -1563,7 +1584,9 @@ def extract_recipe(
         active_model = model
         active_base = base_url
         active_key = resolved_key
-        vision_active = bool(vision_parts)
+        # Vision tiers: "free" -> "paid" (quota exhausted) -> text-only.
+        tier = "free" if vision_parts else "text"
+        last_vision_error = [""]
         if vision_parts:
             active_model = vision_model or os.getenv(
                 "RECIPE_VISION_MODEL", "deepseek-v4.1-flash-free"
@@ -1579,8 +1602,25 @@ def extract_recipe(
                 *vision_parts,
             ]
 
+        def to_text_only(fallback: list[dict]) -> str:
+            nonlocal active_model, active_base, active_key, tier
+            progress.warn(
+                f"vision unavailable ({last_vision_error[0][:160]}); retrying text-only"
+            )
+            active_model = model
+            active_base = base_url
+            active_key = resolved_key
+            tier = "text"
+            return chat_completion(
+                base_url=base_url,
+                api_key=resolved_key,
+                model=model,
+                messages=fallback,
+            )
+
         def request(current_messages: list[dict], fallback: list[dict]) -> str:
-            nonlocal active_model, active_base, active_key, vision_active
+            nonlocal active_model, active_base, active_key, tier
+            last_vision_error[0] = ""
             try:
                 return chat_completion(
                     base_url=active_base,
@@ -1589,21 +1629,28 @@ def extract_recipe(
                     messages=current_messages,
                 )
             except RuntimeError as exc:
-                if not vision_active or not _vision_unavailable(str(exc)):
+                last_vision_error[0] = str(exc)
+                if tier == "text" or not _vision_unavailable(str(exc)):
                     raise
-                progress.warn(
-                    f"vision unavailable ({str(exc)[:160]}); retrying text-only"
-                )
-                active_model = model
-                active_base = base_url
-                active_key = resolved_key
-                vision_active = False
-                return chat_completion(
-                    base_url=base_url,
-                    api_key=resolved_key,
-                    model=model,
-                    messages=fallback,
-                )
+                # Free quota is gone: try the paid vision model on the text
+                # endpoint before giving up on images entirely.
+                if tier == "free" and vision_fallback:
+                    tier = "paid"
+                    active_model = vision_fallback
+                    active_base = vision_fallback_base
+                    active_key = resolved_key
+                    progress.warn(
+                        f"free vision quota exhausted ({str(exc)[:120]}); "
+                        f"retrying vision with {active_model}"
+                    )
+                    progress.detail(f"vision fallback endpoint: {active_base}")
+                    return chat_completion(
+                        base_url=active_base,
+                        api_key=active_key,
+                        model=active_model,
+                        messages=current_messages,
+                    )
+                return to_text_only(fallback)
 
         raw = request(messages, text_messages)
         progress.detail(f"response: {len(raw)} chars")
@@ -1628,7 +1675,7 @@ def extract_recipe(
                 + "; ".join(problems)
                 + ". Return the corrected JSON object only, following the schema exactly."
             )
-            base_messages = messages if vision_active else text_messages
+            base_messages = messages if tier != "text" else text_messages
             repair_messages = [
                 *base_messages,
                 {"role": "assistant", "content": raw},
@@ -1705,6 +1752,13 @@ def main(argv: list[str] | None = None) -> int:
                         help="base URL for the vision model (default: free OpenCode endpoint)")
     parser.add_argument("--vision-api-key", default=os.getenv("RECIPE_VISION_API_KEY") or None,
                         help="API key for the vision endpoint (default: $RECIPE_API_KEY)")
+    parser.add_argument("--vision-fallback-model",
+                        default=os.getenv("RECIPE_VISION_FALLBACK_MODEL", "deepseek-v4.1-flash"),
+                        help="paid vision model used when the free quota is exhausted "
+                             "(default: deepseek-v4.1-flash; empty disables the fallback)")
+    parser.add_argument("--vision-fallback-base-url",
+                        default=os.getenv("RECIPE_VISION_FALLBACK_BASE_URL", "https://opencode.ai/zen/go/v1"),
+                        help="base URL for the paid vision fallback (default: the text endpoint)")
     parser.add_argument("--whisper-model", default=os.getenv("RECIPE_WHISPER_MODEL", "small"),
                         help="faster-whisper model (default: small)")
     parser.add_argument("--language", default=os.getenv("RECIPE_LANGUAGE", "pt"),
@@ -1749,6 +1803,8 @@ def main(argv: list[str] | None = None) -> int:
                 vision_model=args.vision_model,
                 vision_base_url=args.vision_base_url,
                 vision_api_key=args.vision_api_key,
+                vision_fallback_model=args.vision_fallback_model,
+                vision_fallback_base_url=args.vision_fallback_base_url,
                 base_url=args.base_url,
                 api_key=args.api_key,
                 whisper_model=args.whisper_model,

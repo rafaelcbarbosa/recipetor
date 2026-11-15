@@ -50,6 +50,8 @@ Extractor-only environment variables (passed through by both modes):
 | `RECIPE_VISION` | `1` | Send post images and video frames to the vision model (`0` disables). |
 | `RECIPE_VISION_MODEL` | `deepseek-v4.1-flash-free` | Free multimodal model used only when images/video frames are attached. Falls back to the text model without images if vision is rejected or its free quota is exhausted. |
 | `RECIPE_VISION_BASE_URL` | `https://opencode.ai/zen/v1` | Base URL for the free vision model (the text model stays on `zen/go`). |
+| `RECIPE_VISION_FALLBACK_MODEL` | `deepseek-v4.1-flash` | Paid vision model used only when the free quota is exhausted (empty disables). |
+| `RECIPE_VISION_FALLBACK_BASE_URL` | `https://opencode.ai/zen/go/v1` | Base URL for the paid vision fallback. |
 
 ## HTTP job service
 
