@@ -109,6 +109,16 @@
         <div id="status-cards" class="grid"></div>
         <div class="cols">
           <div class="card">
+            <h2>App loads (14 days)</h2>
+            <div id="traffic-by-day"></div>
+          </div>
+          <div class="card">
+            <h2>Devices (all loads)</h2>
+            <div id="traffic-by-device"></div>
+          </div>
+        </div>
+        <div class="cols">
+          <div class="card">
             <h2>Recipes by category</h2>
             <div id="by-category"></div>
           </div>
@@ -127,9 +137,25 @@
             <div id="top-recipes"></div>
           </div>
         </div>
-        <div class="card">
-          <h2>Registered users</h2>
-          <div id="registered-users"></div>
+        <div class="split">
+          <div class="card">
+            <h2>Most viewed last 7 days</h2>
+            <div id="top-recipes-7d"></div>
+          </div>
+          <div class="card">
+            <h2>Top searches (30 days)</h2>
+            <div id="top-searches"></div>
+          </div>
+        </div>
+        <div class="split">
+          <div class="card">
+            <h2>Most favorited</h2>
+            <div id="top-favorited"></div>
+          </div>
+          <div class="card">
+            <h2>Registered users</h2>
+            <div id="registered-users"></div>
+          </div>
         </div>
         <div class="split">
           <div class="card">
@@ -237,6 +263,8 @@
       function render(data) {
         const stats = [
           ["App", data.status.ok ? "Online" : "Offline", `version ${data.status.version || "dev"}`],
+          ["App loads (7d)", data.traffic.appOpens7d, `${data.traffic.appOpensAll} all time`],
+          ["Anonymous loads", data.traffic.anonymousShare != null ? `${data.traffic.anonymousShare}%` : "—", `${data.traffic.appOpens30d} loads in 30d`],
           ["Extractor", data.status.extractorAvailable ? "Ready" : "Offline", data.status.extractorBackend || "unknown"],
           ["Uptime", formatUptime(data.status.uptimeSeconds), "since last restart"],
           ["Recipes", data.recipes.total, `${data.recipes.latest.length} latest shown`],
@@ -263,6 +291,10 @@
         $("by-category").innerHTML = bars(data.recipes.byCategory, data.recipes.total, "No recipes yet.");
         $("by-cuisine").innerHTML = bars(data.recipes.byCuisine, data.recipes.total, "No cuisine data yet.");
 
+        const dayRows = data.traffic.byDay.map((row) => ({ label: row.day.slice(5), count: row.count }));
+        $("traffic-by-day").innerHTML = bars(dayRows, data.traffic.appOpens7d, "No loads recorded yet.");
+        $("traffic-by-device").innerHTML = bars(data.traffic.byDevice, data.traffic.appOpensAll, "No device data yet.");
+
         $("top-users").innerHTML = table(
           [["User"], ["Events", "right"], ["Views", "right"], ["Last seen", "right"]],
           data.users.top,
@@ -284,6 +316,27 @@
           "No recipe views yet.",
         );
 
+        $("top-recipes-7d").innerHTML = table(
+          [["Recipe"], ["Views", "right"]],
+          data.access.topViewed7d,
+          (row) => `<tr><td>${escapeHtml(row.title)}</td><td class="right">${row.views}</td></tr>`,
+          "No views in the last 7 days.",
+        );
+
+        $("top-searches").innerHTML = table(
+          [["Search"], ["Count", "right"]],
+          data.access.topSearches,
+          (row) => `<tr><td>${escapeHtml(row.term)}</td><td class="right">${row.count}</td></tr>`,
+          "No searches recorded yet.",
+        );
+
+        $("top-favorited").innerHTML = table(
+          [["Recipe"], ["Saves", "right"]],
+          data.access.topFavorited,
+          (row) => `<tr><td>${escapeHtml(row.title)}</td><td class="right">${row.saves}</td></tr>`,
+          "No favorites yet.",
+        );
+
         $("latest-recipes").innerHTML = table(
           [["Recipe"], ["Category"], ["Added by"], ["When", "right"]],
           data.recipes.latest,
@@ -292,9 +345,19 @@
         );
 
         $("latest-access").innerHTML = table(
-          [["When"], ["Event"], ["User"], ["Recipe"]],
+          [["When"], ["Event"], ["User"], ["Recipe"], ["Device"]],
           data.access.latest,
-          (row) => `<tr><td class="muted">${escapeHtml(formatDate(row.at))}</td><td>${escapeHtml(row.event)}</td><td>${escapeHtml(row.user || "anonymous")}</td><td>${escapeHtml(row.recipe || "—")}</td></tr>`,
+          (row) => {
+            let device = "—";
+            if (row.meta) {
+              try {
+                device = JSON.parse(row.meta).device ?? "—";
+              } catch {
+                device = "—";
+              }
+            }
+            return `<tr><td class="muted">${escapeHtml(formatDate(row.at))}</td><td>${escapeHtml(row.event)}</td><td>${escapeHtml(row.user || "anonymous")}</td><td>${escapeHtml(row.recipe || "—")}</td><td class="muted">${escapeHtml(device)}</td></tr>`;
+          },
           "No accesses recorded yet.",
         );
 

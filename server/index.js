@@ -154,6 +154,15 @@ export function canonicalizeInstagramUrl(input) {
   return `https://www.instagram.com${pathname.replace(/\/?$/, "/")}`;
 }
 
+// Privacy-safe access metadata: a coarse device class parsed from the
+// User-Agent. No IP addresses, location, or personal data are recorded.
+function deviceFromUserAgent(userAgent) {
+  const value = String(userAgent || "");
+  if (/iPad|Tablet|PlayBook|Silk/i.test(value)) return "tablet";
+  if (/Mobi|iPhone|Android.*Mobile|Windows Phone/i.test(value)) return "mobile";
+  return "desktop";
+}
+
 function jsonResponse(response, status, value) {
   response.writeHead(status, {
     "Cache-Control": "no-store",
@@ -918,6 +927,7 @@ export function createServer({
       if (!result) {
         return jsonResponse(response, 400, { error: "No changes were provided." });
       }
+      store.recordEvent(userId, "edit", editMatch[1]);
       return jsonResponse(response, 200, { recipe: result.recipe });
     }
 
@@ -1093,7 +1103,9 @@ export function createServer({
     }
     if (pathname === "/api/events/app-open" && request.method === "POST") {
       checkSameOrigin(request);
-      store.recordEvent(extractUserId(request), "app_open");
+      store.recordEvent(extractUserId(request), "app_open", null, {
+        device: deviceFromUserAgent(request.headers["user-agent"]),
+      });
       return jsonResponse(response, 200, { ok: true });
     }
     if (pathname === "/api/events/recipe-view" && request.method === "POST") {
@@ -1102,7 +1114,28 @@ export function createServer({
       const recipeId = body?.recipeId?.toString();
       if (!recipeId) return jsonResponse(response, 400, { error: "recipeId is required." });
       if (!store.getRecipe(recipeId)) return jsonResponse(response, 404, { error: "Recipe not found." });
-      store.recordEvent(extractUserId(request), "recipe_view", recipeId);
+      store.recordEvent(extractUserId(request), "recipe_view", recipeId, {
+        device: deviceFromUserAgent(request.headers["user-agent"]),
+      });
+      return jsonResponse(response, 200, { ok: true });
+    }
+    if (pathname === "/api/events/search" && request.method === "POST") {
+      checkSameOrigin(request);
+      const body = await readJson(request);
+      const term = typeof body?.term === "string" ? body.term.trim().slice(0, 80) : "";
+      if (!term) return jsonResponse(response, 200, { ok: true });
+      store.recordEvent(extractUserId(request), "search", null, { term });
+      return jsonResponse(response, 200, { ok: true });
+    }
+    if (pathname === "/api/events/share" && request.method === "POST") {
+      checkSameOrigin(request);
+      const body = await readJson(request);
+      const recipeId = body?.recipeId?.toString();
+      if (recipeId && store.getRecipe(recipeId)) {
+        store.recordEvent(extractUserId(request), "share", recipeId, {
+          device: deviceFromUserAgent(request.headers["user-agent"]),
+        });
+      }
       return jsonResponse(response, 200, { ok: true });
     }
     if (pathname.startsWith("/api/")) {

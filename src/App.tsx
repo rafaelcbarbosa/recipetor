@@ -542,6 +542,20 @@ function App() {
     else localStorage.removeItem("recipetor_token");
   }, [token]);
 
+  useEffect(() => {
+    const term = query.trim();
+    if (term.length < 3) return;
+    const timer = window.setTimeout(() => {
+      void apiFetch("/api/events/search", {
+        method: "POST",
+        body: JSON.stringify({ term: term.slice(0, 80) }),
+      }).catch(() => {
+        // Search telemetry is best effort.
+      });
+    }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [query, apiFetch]);
+
   const appOpenSent = useRef(false);
   useEffect(() => {
     if (appOpenSent.current) return;
@@ -927,6 +941,12 @@ function App() {
   }
 
   async function shareRecipe(recipe: Recipe) {
+    void apiFetch("/api/events/share", {
+      method: "POST",
+      body: JSON.stringify({ recipeId: recipe.id }),
+    }).catch(() => {
+      // Share telemetry is best effort.
+    });
     const shareData = { title: recipe.title, text: `Try this recipe: ${recipe.title}`, url: window.location.href };
     if (navigator.share) {
       try {

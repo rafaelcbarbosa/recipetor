@@ -1589,3 +1589,58 @@ test("uploads and removes a recipe image", async () => {
     rmSync(mediaDir, { recursive: true, force: true });
   }
 });
+
+test("records anonymous accesses with device metadata and reports traffic", async () => {
+  const { store, cleanup } = createTestStore();
+  const { server, baseUrl } = await startServer(store);
+
+  try {
+    const load = await fetch(`${baseUrl}/api/events/app-open`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: baseUrl,
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)",
+      },
+    });
+    assert.equal(load.status, 200);
+
+    const desktopLoad = await fetch(`${baseUrl}/api/events/app-open`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: baseUrl,
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) Firefox",
+      },
+    });
+    assert.equal(desktopLoad.status, 200);
+
+    const search = await request(baseUrl, "/api/events/search", {
+      method: "POST",
+      body: { term: "pudim" },
+    });
+    assert.equal(search.status, 200);
+
+    const user = await createVerifiedUser(baseUrl, "traffic@example.com");
+    await request(baseUrl, "/api/events/app-open", { method: "POST", token: user.token });
+
+    const admin = await createVerifiedUser(baseUrl, "coxinha@gmail.com");
+    const telemetry = await (await request(baseUrl, "/api/telemetry", { token: admin.token })).json();
+    assert.ok(telemetry.traffic.appOpensAll >= 3);
+    assert.equal(telemetry.traffic.anonymousShare > 0, true);
+    const devices = Object.fromEntries(telemetry.traffic.byDevice.map((row) => [row.label, row.count]));
+    assert.equal(devices.mobile, 1);
+    assert.equal(devices.desktop, 2);
+    assert.ok(telemetry.access.topSearches.some((row) => row.term === "pudim"));
+
+    // Anonymous accesses show up in the latest-access list without a user.
+    const anonymousRow = telemetry.access.latest.find(
+      (row) => row.event === "app_open" && row.user === null,
+    );
+    assert.ok(anonymousRow);
+    assert.ok(anonymousRow.meta.includes("device"));
+  } finally {
+    await stopServer(server);
+    cleanup();
+  }
+});

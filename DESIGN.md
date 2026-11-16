@@ -194,7 +194,7 @@ Usage events are retained **90 days**. Signed-out activity is anonymous; signed-
 - **Per user:** is_favorite, my_rating (1 to 5 or none).
 - **Queue job:** id, url (full post link), thumbnail_url (post screenshot, kept on failures too), logs (extractor output, kept for successes and failures), status (pending, processing, completed, failed), stage, stage_label (live extractor step), progress, position, is_mine (creator or watcher), can_retry, recipe_id, error, started_at, updated_at.
 - **Watchers:** job_id, user_id. The creator is always a watcher; watchers receive the same queue rights and completion favorite/history as the creator.
-- **Usage events:** id, user_id (nullable for signed-out activity), event (`app_open`, `recipe_view`, `favorite`, `rating`, `import`, `manual_entry`, `text_entry`), recipe_id, created_at. Retained 90 days.
+- **Usage events:** id, user_id (nullable for signed-out activity), event (`app_open`, `recipe_view`, `search`, `share`, `edit`, `favorite`, `rating`, `import`, `manual_entry`, `text_entry`), recipe_id, meta (small JSON: device class, search term), created_at. Retained 90 days. No IP addresses, location, or personal data are recorded; device class is parsed server-side from the User-Agent.
 - **Telemetry:** aggregates over events, jobs, recipes, users, favorites and ratings. Admin-only; includes emails for signed-in activity.
 
 ## 4. Not designed yet

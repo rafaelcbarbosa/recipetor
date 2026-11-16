@@ -493,7 +493,9 @@ export function createRecipeStore(
     console.log("Migration: added source_text column to extraction_jobs table");
   }
 
-  // Anonymous-friendly usage events for the telemetry dashboard.
+  // Anonymous-friendly usage events for the telemetry dashboard. `meta` holds
+  // small privacy-safe context (device class, search term) — never IPs,
+  // location, or personal data.
   db.exec(`
     CREATE TABLE IF NOT EXISTS app_events (
       id TEXT PRIMARY KEY,
@@ -507,6 +509,13 @@ export function createRecipeStore(
     CREATE INDEX IF NOT EXISTS app_events_event_idx ON app_events(event);
   `);
   const EVENT_RETENTION_DAYS = 90;
+  const eventColumns = new Set(
+    db.prepare("PRAGMA table_info(app_events)").all().map((column) => column.name),
+  );
+  if (!eventColumns.has("meta")) {
+    db.exec("ALTER TABLE app_events ADD COLUMN meta TEXT");
+    console.log("Migration: added meta column to app_events table");
+  }
   db.prepare("DELETE FROM app_events WHERE created_at < ?")
     .run(new Date(Date.now() - EVENT_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString());
 
@@ -576,7 +585,7 @@ export function createRecipeStore(
 
   // Telemetry prepared statements
   const insertEventStmt = db.prepare(
-    "INSERT INTO app_events (id, user_id, event, recipe_id, created_at) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO app_events (id, user_id, event, recipe_id, meta, created_at) VALUES (?, ?, ?, ?, ?, ?)",
   );
 
   // Favorites prepared statements
@@ -1734,9 +1743,16 @@ export function createRecipeStore(
     return result.changes;
   }
 
-  function recordEvent(userId, event, recipeId = null) {
+  function recordEvent(userId, event, recipeId = null, meta = null) {
     try {
-      insertEventStmt.run(randomUUID(), userId ?? null, event, recipeId ?? null, new Date().toISOString());
+      insertEventStmt.run(
+        randomUUID(),
+        userId ?? null,
+        event,
+        recipeId ?? null,
+        meta ? JSON.stringify(meta) : null,
+        new Date().toISOString(),
+      );
     } catch {
       // Usage telemetry must never break an app request.
     }
@@ -1828,7 +1844,7 @@ export function createRecipeStore(
     const access = {
       latest: db
         .prepare(
-          `SELECT e.event, e.created_at AS at, u.email AS user, r.title AS recipe
+          `SELECT e.event, e.meta, e.created_at AS at, u.email AS user, r.title AS recipe
            FROM app_events e
            LEFT JOIN users u ON e.user_id = u.id
            LEFT JOIN recipes r ON e.recipe_id = r.id
@@ -1843,6 +1859,86 @@ export function createRecipeStore(
            GROUP BY e.recipe_id ORDER BY views DESC LIMIT 10`,
         )
         .all(),
+      topViewed7d: db
+        .prepare(
+          `SELECT r.title, COUNT(*) AS views
+           FROM app_events e JOIN recipes r ON e.recipe_id = r.id
+           WHERE e.event = 'recipe_view' AND e.created_at >= ?
+           GROUP BY e.recipe_id ORDER BY views DESC LIMIT 10`,
+        )
+        .all(iso(7)),
+      topFavorited: db
+        .prepare(
+          `SELECT r.title, COUNT(*) AS saves
+           FROM favorites f JOIN recipes r ON f.recipe_id = r.id
+           GROUP BY f.recipe_id ORDER BY saves DESC LIMIT 10`,
+        )
+        .all(),
+      topSearches: db
+        .prepare(
+          `SELECT meta, COUNT(*) AS count
+           FROM app_events
+           WHERE event = 'search' AND created_at >= ? AND meta IS NOT NULL
+           GROUP BY meta ORDER BY count DESC, MIN(created_at) DESC LIMIT 10`,
+        )
+        .all(iso(30))
+        .map((row) => {
+          let term = "";
+          try {
+            term = JSON.parse(row.meta).term ?? "";
+          } catch {
+            term = "";
+          }
+          return { term: term.slice(0, 80), count: row.count };
+        })
+        .filter((row) => row.term),
+    };
+
+    // Traffic: every app load is recorded, signed-in or not. Device class is
+    // derived from the User-Agent server-side; no IP or location is stored.
+    const appOpenAll = count("SELECT COUNT(*) AS n FROM app_events WHERE event = 'app_open'").n;
+    const appOpen7 = count(
+      "SELECT COUNT(*) AS n FROM app_events WHERE event = 'app_open' AND created_at >= ?",
+      iso(7),
+    ).n;
+    const appOpen30 = count(
+      "SELECT COUNT(*) AS n FROM app_events WHERE event = 'app_open' AND created_at >= ?",
+      iso(30),
+    ).n;
+    const appOpenAnonymous = count(
+      "SELECT COUNT(*) AS n FROM app_events WHERE event = 'app_open' AND user_id IS NULL",
+    ).n;
+    const byDay = db
+      .prepare(
+        `SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS count
+         FROM app_events WHERE event = 'app_open' AND created_at >= ?
+         GROUP BY day ORDER BY day ASC`,
+      )
+      .all(iso(13));
+    const deviceRows = db
+      .prepare("SELECT meta FROM app_events WHERE event = 'app_open' AND meta IS NOT NULL")
+      .all()
+      .map((row) => {
+        try {
+          return JSON.parse(row.meta).device ?? "unknown";
+        } catch {
+          return "unknown";
+        }
+      });
+    const deviceCounts = {};
+    for (const device of deviceRows) deviceCounts[device] = (deviceCounts[device] ?? 0) + 1;
+    const byDevice = Object.entries(deviceCounts)
+      .map(([label, count]) => ({ label, count }))
+      .sort((left, right) => right.count - left.count);
+
+    const traffic = {
+      appOpensAll: appOpenAll,
+      appOpens7d: appOpen7,
+      appOpens30d: appOpen30,
+      anonymousShare:
+        appOpenAll > 0 ? Math.round((appOpenAnonymous / appOpenAll) * 100) : null,
+      byDay,
+      byDevice,
     };
 
     const ratings = count("SELECT COUNT(*) AS n, AVG(rating) AS average FROM recipe_ratings");
@@ -1862,6 +1958,7 @@ export function createRecipeStore(
       extraction,
       users,
       access,
+      traffic,
       favorites: { total: count("SELECT COUNT(*) AS n FROM favorites").n },
       ratings: {
         total: ratings.n ?? 0,

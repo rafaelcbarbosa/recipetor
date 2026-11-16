@@ -206,6 +206,7 @@ local to that host.
 - Failed extractions keep the post screenshot when the extractor captured one. The queue exposes the full post link and the screenshot so the user can identify the post.
 - Deletion: the admin can delete any recipe; the original loader can delete their own.
 - Editing: any signed-in user can edit a recipe (pencil button on the detail screen): title, description, category, cuisine, servings, prep time, steps, the photo (upload ≤5 MB JPEG/PNG/WebP, downscaled client-side, or remove it), and the Instagram source links. Links already attached to another recipe are rejected; a link never points at two recipes. Title changes refresh the dedupe key/fingerprint; edits record an `updated` history entry.
+- Access telemetry: every app load is recorded as an `app_open` event, signed-in or not ("anonymous" rows). The server also records `search` (debounced, ≥3 characters, term stored), `share`, `recipe_view` with the recipe, and `edit` events, each with a coarse device class (mobile/tablet/desktop) parsed from the User-Agent. No IPs, location, or personal info are stored. The telemetry dashboard shows loads per day (14 days), device split, anonymous-load share, most viewed recipes (all time and 7 days), most favorited, and top searches (30 days).
 
 Relevant API routes:
 
