@@ -2116,8 +2116,9 @@ button.queue-row {
 }
 
 .small {
-  padding: 8px 12px;
+  padding: 10px 12px;
   font-size: 14px;
+  min-height: 44px;
 }
 
 .signin-gate.compact {
@@ -2227,12 +2228,12 @@ button.queue-row {
   flex: 1 0 auto;
   border: 0;
   background: none;
-  padding: 9px 12px;
+  padding: 11px 12px;
   border-radius: 11px;
   font-size: 13px;
   font-weight: 600;
   color: var(--muted);
-  min-height: 40px;
+  min-height: 44px;
   cursor: pointer;
 }
 
@@ -2502,7 +2503,7 @@ button.queue-row {
   position: absolute;
   top: 8px;
   right: 8px;
-  padding: 6px 10px;
+  padding: 8px 12px;
   border-radius: 999px;
   border: 0;
   background: rgba(41, 37, 31, 0.72);
@@ -2510,7 +2511,7 @@ button.queue-row {
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  min-height: 34px;
+  min-height: 40px;
 }
 
 .presentation {
