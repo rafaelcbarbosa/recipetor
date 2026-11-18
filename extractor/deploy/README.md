@@ -26,6 +26,10 @@ These units run the extractor job service on a stronger host (the home server at
 
    ```sh
    ssh nas 'sudo ufw allow from 192.168.1.200 to any port 8099 proto tcp'
+   # The current app host (recipetor.barbtech.com) is 192.168.1.29/.30, so it
+   # also needs an allow rule for whichever interface it reaches the NAS from:
+   ssh nas 'sudo ufw allow from 192.168.1.29 to any port 8099 proto tcp'
+   ssh nas 'sudo ufw allow from 192.168.1.30 to any port 8099 proto tcp'
    ssh nas 'sudo cp /home/coxinha/recipetor-extractor/deploy/recipe-extractor.service /etc/systemd/system/'
    ssh nas 'sudo systemctl daemon-reload && sudo systemctl enable --now recipe-extractor.service'
    ```
