@@ -136,9 +136,10 @@ test("favorites and logs an attached recipe once per user", () => {
     const attached = store.saveImported("https://www.instagram.com/p/SECOND/", recipe, secondUser.id);
     store.saveImported("https://www.instagram.com/p/THIRD/", recipe, firstUser.id);
 
-    assert.equal(attached.recipe.id, first.recipe.id);
+    // New recipes default to Private, so another family gets their own copy.
+    assert.notEqual(attached.recipe.id, first.recipe.id);
     assert.deepEqual(store.listFavorites(firstUser.id), [first.recipe.id]);
-    assert.deepEqual(store.listFavorites(secondUser.id), [first.recipe.id]);
+    assert.deepEqual(store.listFavorites(secondUser.id), [attached.recipe.id]);
     assert.equal(store.getUserHistory(firstUser.id).length, 1);
     assert.equal(store.getUserHistory(secondUser.id).length, 1);
   } finally {
@@ -323,7 +324,7 @@ test("infers nutrition when a missing quantity is added later", () => {
     const saved = store.saveImported("https://www.instagram.com/p/INCOMPLETE-QUANTITY/", incomplete);
     assert.equal(saved.recipe.ingredients[0].nutrition.calories, null);
 
-    const updated = store.updateIngredient(saved.recipe.id, 0, { amount: 150, unit: "g" });
+    const updated = store.updateIngredient(saved.recipe.id, 0, { amount: 150, unit: "g" }, null, true);
     assert.equal(updated.recipe.ingredients[0].amount, 150);
     assert.equal(updated.recipe.ingredients[0].unit, "g");
     assert.equal(updated.recipe.ingredients[0].nutrition.calories, 247.5);

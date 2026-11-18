@@ -262,15 +262,18 @@ test("only the original loader or the site owner can delete a recipe", async () 
     assert.equal(ownerList.recipes.find((item) => item.id === ownerRecipe.recipe.id).canDelete, true);
     assert.equal(ownerList.recipes.find((item) => item.id === legacy.recipe.id).canDelete, false);
 
+    // New recipes default to Private: another family cannot see them at all.
     const otherList = await (await request(baseUrl, "/api/recipes", { token: other.token })).json();
-    assert.equal(otherList.recipes.find((item) => item.id === ownerRecipe.recipe.id).canDelete, false);
+    assert.equal(otherList.recipes.find((item) => item.id === ownerRecipe.recipe.id), undefined);
+    assert.ok(otherList.recipes.find((item) => item.id === legacy.recipe.id));
 
     const adminList = await (await request(baseUrl, "/api/recipes", { token: admin.token })).json();
     assert.equal(adminList.recipes.find((item) => item.id === ownerRecipe.recipe.id).canDelete, true);
     assert.equal(adminList.recipes.find((item) => item.id === legacy.recipe.id).canDelete, true);
 
     const anonymousList = await (await request(baseUrl, "/api/recipes")).json();
-    assert.equal(anonymousList.recipes.find((item) => item.id === ownerRecipe.recipe.id).canDelete, false);
+    assert.equal(anonymousList.recipes.find((item) => item.id === ownerRecipe.recipe.id), undefined);
+    assert.ok(anonymousList.recipes.find((item) => item.id === legacy.recipe.id));
 
     const ownerDelete = await request(baseUrl, `/api/recipes/${ownerRecipe.recipe.id}`, {
       method: "DELETE",
@@ -639,6 +642,7 @@ test("re-importing an existing link favorites it for the new user", async () => 
     const second = await createVerifiedUser(baseUrl, "second-source@example.com");
     const url = "https://www.instagram.com/p/SOURCE/";
     const saved = store.saveImported(url, recipe, first.user.id);
+    store.setRecipeVisibility(saved.recipe.id, "public", [], first.user.id, false);
     const completedJob = store.createExtractionJob(url, first.user.id);
     store.updateExtractionJob(completedJob.id, {
       status: "completed",
@@ -710,8 +714,10 @@ test("users who join an in-progress import get the finished recipe favorited", a
 
     const firstFavorites = await (await request(baseUrl, "/api/favorites", { token: first.token })).json();
     const secondFavorites = await (await request(baseUrl, "/api/favorites", { token: second.token })).json();
-    assert.deepEqual(firstFavorites.favorites, [jobs[0].recipeId]);
-    assert.deepEqual(secondFavorites.favorites, [jobs[0].recipeId]);
+    assert.equal(firstFavorites.favorites.length, 1);
+    assert.equal(secondFavorites.favorites.length, 1);
+    // Each family gets their own private copy, so the ids differ.
+    assert.notEqual(firstFavorites.favorites[0], secondFavorites.favorites[0]);
   } finally {
     await stopServer(server);
     cleanup();
@@ -924,9 +930,12 @@ test("manual entry saves a recipe, attaches the failed link, and favorites watch
     assert.equal(body.job.recipeId, body.recipe.id);
     assert.equal(store.getRecipeOwner(body.recipe.id), owner.user.id);
     assert.ok(store.listFavorites(owner.user.id).includes(body.recipe.id));
-    assert.ok(store.listFavorites(watcher.user.id).includes(body.recipe.id));
+    assert.equal(store.listFavorites(watcher.user.id).length, 1);
+    assert.notEqual(store.listFavorites(watcher.user.id)[0], body.recipe.id);
     assert.ok(!store.listPublicExtractionJobs(owner.user.id).some((item) => item.id === job.id));
 
+    // Once the owner publishes, a re-import can resolve to the same recipe.
+    store.setRecipeVisibility(body.recipe.id, "public", [], owner.user.id, false);
     const reimport = await request(baseUrl, "/api/recipes/import", {
       method: "POST",
       token: watcher.token,
@@ -1424,12 +1433,12 @@ test("failed text normalization stays in the backlog and can be retried", async 
   }
 });
 
-test("any signed-in user can edit recipe fields, steps, and links", async () => {
+test("only the recipe owner can edit recipe fields, steps, and links", async () => {
   const { store, cleanup } = createTestStore();
   const { server, baseUrl } = await startServer(store);
 
   try {
-    await createVerifiedUser(baseUrl, "edit-owner@example.com");
+    const signedUp = await createVerifiedUser(baseUrl, "edit-owner@example.com");
     const owner = store.getUserByEmail("edit-owner@example.com");
     store.saveImported("https://www.instagram.com/p/EDITTEST1/", recipe, owner.id);
     const original = store.getBySource("https://www.instagram.com/p/EDITTEST1/", owner.id, false);
@@ -1444,12 +1453,19 @@ test("any signed-in user can edit recipe fields, steps, and links", async () => 
     });
     assert.equal(anonymous.status, 401);
 
-    const patched = await request(baseUrl, `/api/recipes/${recipeId}`, {
+    const forbidden = await request(baseUrl, `/api/recipes/${recipeId}`, {
       method: "PATCH",
       token: editor.token,
+      body: { title: "Edited by another user." },
+    });
+    assert.equal(forbidden.status, 403);
+
+    const patched = await request(baseUrl, `/api/recipes/${recipeId}`, {
+      method: "PATCH",
+      token: signedUp.token,
       body: {
         title: "Edited Lemon Pasta",
-        description: "Edited by another user.",
+        description: "Edited by the owner.",
         steps: ["Boil water.", "Cook pasta.", "Toss with lemon."],
         prepTimeMinutes: 30,
         basePortions: 2,
@@ -1466,7 +1482,7 @@ test("any signed-in user can edit recipe fields, steps, and links", async () => 
 
     const invalid = await request(baseUrl, `/api/recipes/${recipeId}`, {
       method: "PATCH",
-      token: editor.token,
+      token: signedUp.token,
       body: { steps: [] },
     });
     assert.equal(invalid.status, 400);
@@ -1474,7 +1490,7 @@ test("any signed-in user can edit recipe fields, steps, and links", async () => 
     // Replace links.
     const linked = await request(baseUrl, `/api/recipes/${recipeId}`, {
       method: "PATCH",
-      token: editor.token,
+      token: signedUp.token,
       body: { sourceUrls: ["https://www.instagram.com/p/EDITTEST2/"] },
     });
     assert.equal(linked.status, 200);
@@ -1483,7 +1499,7 @@ test("any signed-in user can edit recipe fields, steps, and links", async () => 
     // Remove all links.
     const unlinked = await request(baseUrl, `/api/recipes/${recipeId}`, {
       method: "PATCH",
-      token: editor.token,
+      token: signedUp.token,
       body: { sourceUrls: [] },
     });
     assert.equal(unlinked.status, 200);
@@ -1499,17 +1515,23 @@ test("editing rejects links already attached to another recipe", async () => {
   const { server, baseUrl } = await startServer(store);
 
   try {
-    await createVerifiedUser(baseUrl, "dup-owner@example.com");
-    const owner = store.getUserByEmail("dup-owner@example.com");
-    store.saveImported("https://www.instagram.com/p/DUPLINK1/", recipe, owner.id);
-    store.saveImported("https://www.instagram.com/p/DUPLINK2/", { ...recipe, title: "Second Dish" }, owner.id);
-    const first = store.getBySource("https://www.instagram.com/p/DUPLINK1/", owner.id, false);
-    const second = store.getBySource("https://www.instagram.com/p/DUPLINK2/", owner.id, false);
+    const owner = await createVerifiedUser(baseUrl, "dup-owner@example.com");
+    store.saveImported("https://www.instagram.com/p/DUPLINK1/", recipe, owner.user.id);
+    store.saveImported("https://www.instagram.com/p/DUPLINK2/", { ...recipe, title: "Second Dish" }, owner.user.id);
+    const first = store.getBySource("https://www.instagram.com/p/DUPLINK1/", owner.user.id, false);
+    const second = store.getBySource("https://www.instagram.com/p/DUPLINK2/", owner.user.id, false);
 
     const editor = await createVerifiedUser(baseUrl, "dup-editor@example.com");
-    const conflict = await request(baseUrl, `/api/recipes/${first.id}`, {
+    const forbidden = await request(baseUrl, `/api/recipes/${first.id}`, {
       method: "PATCH",
       token: editor.token,
+      body: { sourceUrls: ["https://www.instagram.com/p/DUPLINK2/"] },
+    });
+    assert.equal(forbidden.status, 403);
+
+    const conflict = await request(baseUrl, `/api/recipes/${first.id}`, {
+      method: "PATCH",
+      token: owner.token,
       body: { sourceUrls: ["https://www.instagram.com/p/DUPLINK2/"] },
     });
     assert.equal(conflict.status, 400);
@@ -1518,7 +1540,7 @@ test("editing rejects links already attached to another recipe", async () => {
     // Non-Instagram links are rejected.
     const bad = await request(baseUrl, `/api/recipes/${first.id}`, {
       method: "PATCH",
-      token: editor.token,
+      token: owner.token,
       body: { sourceUrls: ["https://example.com/post/123/"] },
     });
     assert.equal(bad.status, 400);
@@ -1535,7 +1557,7 @@ test("uploads and removes a recipe image", async () => {
   const { server, baseUrl } = await startServer(store, { mediaDir });
 
   try {
-    await createVerifiedUser(baseUrl, "img-owner@example.com");
+    const ownerSignup = await createVerifiedUser(baseUrl, "img-owner@example.com");
     const owner = store.getUserByEmail("img-owner@example.com");
     store.saveImported("https://www.instagram.com/p/IMGTEST1/", recipe, owner.id);
     const target = store.getBySource("https://www.instagram.com/p/IMGTEST1/", owner.id, false);
@@ -1557,7 +1579,7 @@ test("uploads and removes a recipe image", async () => {
     );
     const upload = await fetch(`${baseUrl}/api/recipes/${target.id}/image`, {
       method: "POST",
-      headers: { "Content-Type": "image/png", Origin: baseUrl, Authorization: `Bearer ${editor.token}` },
+      headers: { "Content-Type": "image/png", Origin: baseUrl, Authorization: `Bearer ${ownerSignup.token}` },
       body: png,
     });
     assert.equal(upload.status, 200);
@@ -1571,14 +1593,14 @@ test("uploads and removes a recipe image", async () => {
 
     const wrongType = await fetch(`${baseUrl}/api/recipes/${target.id}/image`, {
       method: "POST",
-      headers: { "Content-Type": "text/plain", Origin: baseUrl, Authorization: `Bearer ${editor.token}` },
+      headers: { "Content-Type": "text/plain", Origin: baseUrl, Authorization: `Bearer ${ownerSignup.token}` },
       body: "nope",
     });
     assert.equal(wrongType.status, 415);
 
     const removed = await request(baseUrl, `/api/recipes/${target.id}`, {
       method: "PATCH",
-      token: editor.token,
+      token: ownerSignup.token,
       body: { imageUrl: null },
     });
     assert.equal(removed.status, 200);

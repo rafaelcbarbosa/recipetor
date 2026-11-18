@@ -3,6 +3,8 @@ import { mkdirSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import nodemailer from "nodemailer";
+import { createClassStore, initClassSchema } from "./class-store.js";
+import { createPublicStore } from "./public-store.js";
 
 const FINISHED_JOB_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const COMPLETED_JOB_LIMIT = 10;
@@ -329,6 +331,12 @@ function toRecipe(row, sourceRows, userId = null, isAdmin = false) {
     sourceCount: sourceUrls.length,
     ratingAvg: row.rating_avg ?? 0,
     ratingCount: row.rating_count ?? 0,
+    visibility: row.visibility ?? "private",
+    sourceUrl: row.source_url ?? null,
+    sourceCredit: row.source_credit ?? null,
+    allergenTags: parseJsonArray(row.allergen_tags_json),
+    stepJobs: parseJsonArray(row.step_jobs_json),
+    canEdit: Boolean(userId && (isAdmin || row.user_id === userId)),
     canDelete: Boolean(userId && (isAdmin || row.user_id === userId)),
     isExample: false,
   };
@@ -351,6 +359,7 @@ export function createRecipeStore(
       password_hash TEXT NOT NULL,
       salt TEXT NOT NULL,
       email_verified INTEGER NOT NULL DEFAULT 0,
+      display_name TEXT,
       created_at TEXT NOT NULL
     );
   `);
@@ -361,6 +370,15 @@ export function createRecipeStore(
   if (!hasEmailVerified) {
     db.exec("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0");
   }
+  if (!userColumns.some((col) => col.name === "display_name")) {
+    db.exec("ALTER TABLE users ADD COLUMN display_name TEXT");
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      name TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    );
+  `);
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS recipes (
@@ -403,6 +421,11 @@ export function createRecipeStore(
     ["image_url", "ALTER TABLE recipes ADD COLUMN image_url TEXT"],
     ["rating_avg", "ALTER TABLE recipes ADD COLUMN rating_avg REAL NOT NULL DEFAULT 0"],
     ["rating_count", "ALTER TABLE recipes ADD COLUMN rating_count INTEGER NOT NULL DEFAULT 0"],
+    ["visibility", "ALTER TABLE recipes ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'"],
+    ["source_url", "ALTER TABLE recipes ADD COLUMN source_url TEXT"],
+    ["source_credit", "ALTER TABLE recipes ADD COLUMN source_credit TEXT"],
+    ["allergen_tags_json", "ALTER TABLE recipes ADD COLUMN allergen_tags_json TEXT NOT NULL DEFAULT '[]'"],
+    ["step_jobs_json", "ALTER TABLE recipes ADD COLUMN step_jobs_json TEXT NOT NULL DEFAULT '[]'"],
   ];
   const recipeColumns = new Set(
     db.prepare("PRAGMA table_info(recipes)").all().map((column) => column.name),
@@ -422,6 +445,32 @@ export function createRecipeStore(
     }
   }
   db.exec("CREATE INDEX IF NOT EXISTS recipes_user_id_idx ON recipes(user_id);");
+  db.exec("CREATE INDEX IF NOT EXISTS recipes_visibility_idx ON recipes(visibility);");
+
+  // Existing recipes were part of the shared public library. Publish them once,
+  // then never touch visibility again so owners can switch a recipe to Private.
+  const publicBackfill = db
+    .prepare("SELECT 1 FROM schema_migrations WHERE name = 'recipes_visibility_public_v1'")
+    .get();
+  if (!publicBackfill) {
+    db.exec("UPDATE recipes SET visibility = 'public' WHERE visibility = 'private'");
+    db.prepare("INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)").run(
+      "recipes_visibility_public_v1",
+      new Date().toISOString(),
+    );
+  }
+
+  // Keep a single canonical source link for public credit and pages.
+  db.exec(`
+    UPDATE recipes
+    SET source_url = (
+      SELECT url FROM recipe_sources
+      WHERE recipe_sources.recipe_id = recipes.id
+      ORDER BY created_at ASC LIMIT 1
+    )
+    WHERE source_url IS NULL
+      AND EXISTS (SELECT 1 FROM recipe_sources WHERE recipe_sources.recipe_id = recipes.id)
+  `);
 
   // Backfill meal types for recipes created before classification existed.
   // New extractions carry their own values; this only fills empty arrays.
@@ -570,6 +619,14 @@ export function createRecipeStore(
     CREATE INDEX IF NOT EXISTS password_reset_codes_email_idx ON password_reset_codes(email);
   `);
 
+  initClassSchema(db);
+
+  const publicOrigin = (
+    process.env.RECIPETOR_PUBLIC_ORIGIN ||
+    process.env.RECIPETOR_ORIGIN ||
+    "https://recipetor.barbtech.com"
+  ).replace(/\/$/, "");
+
   const userByEmail = db.prepare("SELECT * FROM users WHERE email = ?");
   const userById = db.prepare("SELECT * FROM users WHERE id = ?");
 
@@ -628,15 +685,23 @@ export function createRecipeStore(
   const deleteExpiredPasswordResetCodesStmt = db.prepare("DELETE FROM password_reset_codes WHERE expires_at < ?");
   const updateUserPasswordStmt = db.prepare("UPDATE users SET password_hash = ?, salt = ? WHERE email = ?");
 
-  function createUser(email, password) {
+  const classStore = createClassStore(db, {
+    sendEmail: emailSender,
+    origin: publicOrigin,
+    canViewRecipe: (recipeId, userId) => canViewRecipe(recipeById.get(recipeId), userId, false),
+    getRecipe: (recipeId, userId) => getRecipe(recipeId, userId, false),
+  });
+  const publicStore = createPublicStore(db);
+
+  function createUser(email, password, displayName = null) {
     const existing = userByEmail.get(email);
     if (existing) throw new Error("Email already registered");
     const id = randomUUID();
     const salt = generateSalt();
     const passwordHash = hashPassword(password, salt);
     const now = new Date().toISOString();
-    db.prepare("INSERT INTO users (id, email, password_hash, salt, email_verified, created_at) VALUES (?, ?, ?, ?, 0, ?)")
-      .run(id, email, passwordHash, salt, now);
+    db.prepare("INSERT INTO users (id, email, password_hash, salt, email_verified, display_name, created_at) VALUES (?, ?, ?, ?, 0, ?, ?)")
+      .run(id, email, passwordHash, salt, displayName ? String(displayName).trim().slice(0, 80) || null : null, now);
     
     // Generate verification code
     const code = generateCode(); // 6-digit code
@@ -654,19 +719,25 @@ export function createRecipeStore(
       "Verification code",
     );
 
-    return { id, email, createdAt: now };
+    return { id, email, displayName: displayName ? String(displayName).trim().slice(0, 80) || null : null, createdAt: now };
   }
 
   function getUserByEmail(email) {
     const row = userByEmail.get(email);
     if (!row) return null;
-    return { id: row.id, email: row.email, createdAt: row.created_at };
+    return { id: row.id, email: row.email, displayName: row.display_name ?? null, createdAt: row.created_at };
   }
 
   function getUserById(id) {
     const row = userById.get(id);
     if (!row) return null;
-    return { id: row.id, email: row.email, createdAt: row.created_at };
+    return { id: row.id, email: row.email, displayName: row.display_name ?? null, createdAt: row.created_at };
+  }
+
+  function updateUserDisplayName(id, displayName) {
+    const clean = String(displayName ?? "").trim().replace(/\s+/g, " ").slice(0, 80);
+    db.prepare("UPDATE users SET display_name = ? WHERE id = ?").run(clean || null, id);
+    return getUserById(id);
   }
 
   function deleteUser(userId) {
@@ -680,7 +751,7 @@ export function createRecipeStore(
     if (!row) return null;
     if (!verifyPassword(password, row.salt, row.password_hash)) return null;
     if (!row.email_verified) return { error: "EMAIL_NOT_VERIFIED", message: "Please verify your email before logging in" };
-    return { id: row.id, email: row.email, createdAt: row.created_at };
+    return { id: row.id, email: row.email, displayName: row.display_name ?? null, createdAt: row.created_at };
   }
 
   function verifyEmailCode(email, code) {
@@ -1155,6 +1226,24 @@ export function createRecipeStore(
   const sourcesByRecipe = db.prepare(
     "SELECT url FROM recipe_sources WHERE recipe_id = ? ORDER BY created_at ASC",
   );
+  const classMembershipForRecipe = db.prepare(
+    `SELECT 1 FROM recipe_classes rc
+     JOIN class_members cm ON cm.class_id = rc.class_id
+     WHERE rc.recipe_id = ? AND cm.user_id = ? AND cm.status = 'approved'
+     LIMIT 1`,
+  );
+  const classIdsByRecipe = db.prepare("SELECT class_id FROM recipe_classes WHERE recipe_id = ?");
+
+  function canViewRecipe(row, userId = null, isAdmin = false) {
+    if (!row) return false;
+    if (isAdmin) return true;
+    if (row.visibility === "public") return true;
+    if (userId && row.user_id === userId) return true;
+    if (row.visibility === "class" && userId) {
+      return Boolean(classMembershipForRecipe.get(row.id, userId));
+    }
+    return false;
+  }
 
   function decorateRecipe(recipe, userId) {
     if (!recipe || !userId) return recipe;
@@ -1162,13 +1251,20 @@ export function createRecipeStore(
       ...recipe,
       isFavorite: isFavorite(userId, recipe.id),
       myRating: getMyRating(userId, recipe.id),
+      classIds: classIdsByRecipe.all(recipe.id).map((row) => row.class_id),
     };
   }
 
   function getRecipe(id, userId = null, isAdmin = false) {
     const row = recipeById.get(id);
     if (!row) return null;
+    if (!canViewRecipe(row, userId, isAdmin)) return null;
     return decorateRecipe(toRecipe(row, sourcesByRecipe.all(id), userId, isAdmin), userId);
+  }
+
+  // Internal raw row access for owner checks and migrations.
+  function getRecipeRow(id) {
+    return recipeById.get(id) ?? null;
   }
 
   // Returns the owner user id, null for legacy recipes without an owner,
@@ -1178,32 +1274,73 @@ export function createRecipeStore(
     return row ? row.user_id ?? null : undefined;
   }
 
+  function getSourceRecipeId(url) {
+    const source = db.prepare("SELECT recipe_id FROM recipe_sources WHERE url = ?").get(url);
+    return source?.recipe_id ?? null;
+  }
+
   function getBySource(url, userId = null, isAdmin = false) {
     const source = db.prepare("SELECT recipe_id FROM recipe_sources WHERE url = ?").get(url);
     return source ? getRecipe(source.recipe_id, userId, isAdmin) : null;
   }
 
   function list(userId = null, isAdmin = false) {
-    return db
-      .prepare("SELECT id FROM recipes ORDER BY updated_at DESC, title COLLATE NOCASE ASC")
-      .all()
-      .map(({ id }) => getRecipe(id, userId, isAdmin));
+    let rows;
+    if (isAdmin) {
+      rows = db
+        .prepare("SELECT id FROM recipes ORDER BY updated_at DESC, title COLLATE NOCASE ASC")
+        .all();
+    } else if (!userId) {
+      rows = db
+        .prepare(
+          "SELECT id FROM recipes WHERE visibility = 'public' ORDER BY updated_at DESC, title COLLATE NOCASE ASC",
+        )
+        .all();
+    } else {
+      rows = db
+        .prepare(
+          `SELECT id FROM recipes
+           WHERE visibility = 'public'
+              OR user_id = ?
+              OR (visibility = 'class' AND EXISTS (
+                SELECT 1 FROM recipe_classes rc
+                JOIN class_members cm ON cm.class_id = rc.class_id
+                WHERE rc.recipe_id = recipes.id AND cm.user_id = ? AND cm.status = 'approved'
+              ))
+           ORDER BY updated_at DESC, title COLLATE NOCASE ASC`,
+        )
+        .all(userId, userId);
+    }
+    return rows.map(({ id }) => getRecipe(id, userId, isAdmin)).filter(Boolean);
   }
 
   function deleteRecipe(id) {
-    const existing = getRecipe(id);
+    const existing = recipeById.get(id);
     if (!existing) return false;
+
+    const postPhotos = db
+      .prepare("SELECT photo_url FROM class_posts WHERE recipe_id = ? AND photo_url IS NOT NULL")
+      .all(id)
+      .map((row) => row.photo_url);
+    const recipeImage = existing.image_url && existing.image_url.startsWith("/media/")
+      ? existing.image_url.slice("/media/".length)
+      : null;
 
     db.exec("BEGIN IMMEDIATE");
     try {
       db.prepare("DELETE FROM recipe_sources WHERE recipe_id = ?").run(id);
+      db.prepare("DELETE FROM recipe_classes WHERE recipe_id = ?").run(id);
       db.prepare("DELETE FROM recipes WHERE id = ?").run(id);
       db.exec("COMMIT");
-      return true;
     } catch (error) {
       db.exec("ROLLBACK");
       throw error;
     }
+    return {
+      deleted: true,
+      classMediaFiles: postPhotos,
+      mediaFiles: recipeImage ? [recipeImage] : [],
+    };
   }
 
   function computeTotalsFromIngredients(ingredients, basePortions) {
@@ -1383,6 +1520,7 @@ export function createRecipeStore(
     if (!changes || typeof changes !== "object" || Array.isArray(changes)) return { error: "NO_CHANGES" };
     const row = recipeById.get(recipeId);
     if (!row) return { error: "NOT_FOUND" };
+    if (!isAdmin && (!userId || row.user_id !== userId)) return { error: "FORBIDDEN" };
 
     let ingredients;
     try {
@@ -1477,11 +1615,12 @@ export function createRecipeStore(
   }
 
   // Editable recipe fields. `changes` keys map to columns; a `title` change
-  // also refreshes title_key and the fingerprint used for dedupe. Permission
-  // is enforced by the caller; any signed-in user may edit.
+  // also refreshes title_key and the fingerprint used for dedupe. Only the
+  // recipe owner (or site admin) may edit.
   function updateRecipe(recipeId, changes, userId = null, isAdmin = false) {
     const row = recipeById.get(recipeId);
     if (!row) return { error: "NOT_FOUND" };
+    if (!isAdmin && (!userId || row.user_id !== userId)) return { error: "FORBIDDEN" };
 
     const now = new Date().toISOString();
     const fields = [];
@@ -1556,6 +1695,31 @@ export function createRecipeStore(
       fields.push("image_url = ?");
       params.push(changes.imageUrl);
     }
+    if (Object.hasOwn(changes, "sourceCredit")) {
+      if (changes.sourceCredit !== null && typeof changes.sourceCredit !== "string") {
+        return { error: "INVALID_SOURCE_CREDIT" };
+      }
+      fields.push("source_credit = ?");
+      params.push(changes.sourceCredit ? changes.sourceCredit.trim().slice(0, 200) : null);
+    }
+    if (Object.hasOwn(changes, "allergenTags")) {
+      if (!Array.isArray(changes.allergenTags)) return { error: "INVALID_ALLERGENS" };
+      const tags = changes.allergenTags
+        .filter((tag) => typeof tag === "string" && tag.trim())
+        .map((tag) => tag.trim().slice(0, 40))
+        .slice(0, 12);
+      fields.push("allergen_tags_json = ?");
+      params.push(JSON.stringify(tags));
+    }
+    if (Object.hasOwn(changes, "stepJobs")) {
+      if (!Array.isArray(changes.stepJobs)) return { error: "INVALID_STEP_JOBS" };
+      const jobs = changes.stepJobs
+        .filter((job) => typeof job === "string")
+        .map((job) => job.trim().slice(0, 60))
+        .slice(0, 40);
+      fields.push("step_jobs_json = ?");
+      params.push(JSON.stringify(jobs));
+    }
 
     if (fields.length === 0) return { error: "NO_CHANGES" };
     fields.push("updated_at = ?");
@@ -1570,6 +1734,7 @@ export function createRecipeStore(
   function updateRecipeSources(recipeId, urls, userId = null, isAdmin = false) {
     const row = recipeById.get(recipeId);
     if (!row) return { error: "NOT_FOUND" };
+    if (!isAdmin && (!userId || row.user_id !== userId)) return { error: "FORBIDDEN" };
     if (!Array.isArray(urls)) return { error: "INVALID_LINK" };
 
     const now = new Date().toISOString();
@@ -1609,6 +1774,52 @@ export function createRecipeStore(
     }
   }
 
+  function setRecipeVisibility(recipeId, visibility, classIds = [], userId = null, isAdmin = false) {
+    const row = recipeById.get(recipeId);
+    if (!row) return { error: "NOT_FOUND" };
+    if (!isAdmin && (!userId || row.user_id !== userId)) return { error: "FORBIDDEN" };
+    if (!["private", "class", "public"].includes(visibility)) return { error: "INVALID_VISIBILITY" };
+    if (visibility === "private") {
+      const posts = db.prepare("SELECT COUNT(*) AS n FROM class_posts WHERE recipe_id = ?").get(recipeId).n;
+      if (posts > 0) return { error: "IN_CLASS_POST" };
+    }
+
+    const requested = Array.isArray(classIds) ? [...new Set(classIds.filter((id) => typeof id === "string"))] : [];
+    const validClassIds = [];
+    for (const classId of requested) {
+      const member = userId
+        ? db
+            .prepare(
+              "SELECT 1 FROM class_members WHERE class_id = ? AND user_id = ? AND status = 'approved'",
+            )
+            .get(classId, userId)
+        : null;
+      if (member || isAdmin) validClassIds.push(classId);
+    }
+    if (visibility === "class" && validClassIds.length === 0) return { error: "NO_CLASS" };
+
+    const timestamp = new Date().toISOString();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.prepare("UPDATE recipes SET visibility = ?, updated_at = ? WHERE id = ?").run(visibility, timestamp, recipeId);
+      if (visibility === "class") {
+        db.prepare("DELETE FROM recipe_classes WHERE recipe_id = ?").run(recipeId);
+        for (const classId of validClassIds) {
+          db.prepare("INSERT OR IGNORE INTO recipe_classes (recipe_id, class_id, created_at) VALUES (?, ?, ?)").run(
+            recipeId,
+            classId,
+            timestamp,
+          );
+        }
+      }
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+    return { recipe: getRecipe(recipeId, userId, isAdmin) };
+  }
+
   function saveImported(url, recipe, userId, isAdmin = false) {
     const samples = buildNutritionIndex();
     const enrichedIngredients = enrichIngredients(recipe.ingredients, samples);
@@ -1624,15 +1835,22 @@ export function createRecipeStore(
         ? db.prepare("SELECT recipe_id FROM recipe_sources WHERE url = ?").get(url)
         : null;
       if (source) {
-        const existing = getRecipe(source.recipe_id, userId, isAdmin);
-        if (userId && addFavorite(userId, source.recipe_id)) addToHistory(userId, source.recipe_id, "added");
-        db.exec("COMMIT");
-        return { recipe: existing, duplicate: true, reason: "source" };
+        const sourceRow = recipeById.get(source.recipe_id);
+        if (canViewRecipe(sourceRow, userId, isAdmin)) {
+          const existing = getRecipe(source.recipe_id, userId, isAdmin);
+          if (userId && addFavorite(userId, source.recipe_id)) addToHistory(userId, source.recipe_id, "added");
+          db.exec("COMMIT");
+          return { recipe: existing, duplicate: true, reason: "source" };
+        }
+        // The link belongs to a recipe this family cannot see. Keep that
+        // recipe private and import a fresh copy instead of leaking it.
+        url = null;
       }
 
       const candidates = db
         .prepare("SELECT * FROM recipes WHERE title_key = ? ORDER BY updated_at DESC LIMIT 50")
-        .all(titleKey);
+        .all(titleKey)
+        .filter((candidate) => canViewRecipe(candidate, userId, isAdmin));
       const match = candidates.find(
         (candidate) =>
           candidate.fingerprint === recipeFingerprint ||
@@ -1668,12 +1886,14 @@ export function createRecipeStore(
       const computedTotals = enrichedRecipe.totals
         ? enrichedRecipe.totals
         : computeTotalsFromIngredients(enrichedRecipe.ingredients, enrichedRecipe.basePortions);
+      const visibility = userId ? "private" : "public";
       db.prepare(`
         INSERT INTO recipes (
           id, user_id, title, title_key, description, category, cuisine, meal_types_json, diet_tags_json,
           custom_tags_json, image_url, prep_time_minutes, base_portions, emoji, color,
-          ingredients_json, steps_json, totals_json, fingerprint, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ingredients_json, steps_json, totals_json, fingerprint, visibility, source_url, source_credit,
+          allergen_tags_json, step_jobs_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id,
         userId ?? null,
@@ -1694,6 +1914,11 @@ export function createRecipeStore(
         JSON.stringify(enrichedRecipe.steps),
         computedTotals ? JSON.stringify(computedTotals) : null,
         recipeFingerprint,
+        visibility,
+        url ?? null,
+        enrichedRecipe.sourceCredit ?? null,
+        JSON.stringify(enrichedRecipe.allergenTags ?? []),
+        JSON.stringify(enrichedRecipe.stepJobs ?? []),
         now,
         now,
       );
@@ -1981,6 +2206,7 @@ export function createRecipeStore(
     createUser,
     getUserByEmail,
     getUserById,
+    updateUserDisplayName,
     verifyUser,
     deleteUser,
     verifyEmailCode,
@@ -1996,6 +2222,9 @@ export function createRecipeStore(
     getBySource,
     getRecipe,
     getRecipeOwner,
+    getSourceRecipeId,
+    canViewRecipe,
+    setRecipeVisibility,
     list,
     saveImported,
     createExtractionJob,
@@ -2032,5 +2261,8 @@ export function createRecipeStore(
     // History
     getUserHistory,
     addToHistory,
+    // Classes, Cook-Alongs, and public recipes
+    classes: classStore,
+    public: publicStore,
   };
 }

@@ -1,9 +1,11 @@
 import { createServer as createHttpServer } from "node:http";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRecipeStore } from "./recipe-store.js";
+import { createClassRouter } from "./class-routes.js";
+import { createPublicPageHandler } from "./public-page.js";
 import { createHttpExtractor, isHttpExtractorAvailable, normalizeRecipeText, useHttpExtractor } from "./http-extractor.js";
 import { validateRecipeResult } from "./recipe-schema.js";
 import { createScriptExtractor, isScriptAvailable } from "./script-extractor.js";
@@ -296,10 +298,30 @@ export function createServer({
   extractorAvailable = defaultExtractor.extractorAvailable,
   extractorBackend = defaultExtractor.backend,
   mediaDir = resolve(process.env.RECIPETOR_MEDIA_DIR || DEFAULT_MEDIA_DIR),
+  distDir = resolve(ROOT, "dist"),
   now = () => Date.now(),
 } = {}) {
   if (!store) throw new Error("A recipe store is required.");
   const rateLimits = new Map();
+  const classMediaDir = resolve(
+    process.env.RECIPETOR_CLASS_MEDIA_DIR || resolve(dirname(mediaDir), "class-media"),
+  );
+  const mediaSecret = createHmac("sha256", JWT_SECRET).update("class-media").digest("hex");
+  const classRouter = createClassRouter({
+    store,
+    readJson,
+    jsonResponse,
+    checkSameOrigin,
+    classMediaDir,
+    mediaSecret,
+    isAdminRequest,
+    now,
+  });
+  const publicPageHandler = createPublicPageHandler({
+    store,
+    distDir,
+    now,
+  });
 
   // Serial job queue - processes one job at a time across all users
   const jobQueue = [];
@@ -404,10 +426,15 @@ export function createServer({
         console.log(`[queue] Job ${jobId}: Recipe saved: ${saved.recipe.id}, duplicate: ${saved.duplicate}`);
 
         // The creator and every watcher get the finished recipe favorited and
-        // added to their history.
+        // added to their history. Each watcher gets their own private copy so
+        // one family's private recipe never appears in another family's list.
         for (const watcherId of store.listJobWatchers(jobId)) {
-          if (store.addFavorite(watcherId, saved.recipe.id)) {
-            store.addToHistory(watcherId, saved.recipe.id, "added");
+          const target =
+            watcherId === userId
+              ? saved.recipe.id
+              : store.saveImported(isTextJob ? null : url, extracted, watcherId).recipe.id;
+          if (store.addFavorite(watcherId, target)) {
+            store.addToHistory(watcherId, target, "added");
           }
         }
 
@@ -483,6 +510,8 @@ export function createServer({
 
   async function handleRequest(request, response) {
     const pathname = new URL(request.url, "http://localhost").pathname;
+    const url = new URL(request.url, "http://localhost");
+    request.userId = extractUserId(request);
 
     if (pathname === "/api/health" && request.method === "GET") {
       let available = false;
@@ -505,10 +534,10 @@ export function createServer({
       if (!email || !email.includes("@")) return jsonResponse(response, 400, { error: "Valid email required." });
       if (!password || password.length < 6) return jsonResponse(response, 400, { error: "Password must be at least 6 characters." });
       try {
-        const user = store.createUser(email, password);
+        const user = store.createUser(email, password, body?.displayName ?? null);
         // User created but email not verified - return info about verification
         return jsonResponse(response, 200, { 
-          user: { id: user.id, email: user.email }, 
+          user: { id: user.id, email: user.email, displayName: user.displayName ?? null }, 
           requiresVerification: true,
           message: "Account created. Please check your email for a verification code." 
         });
@@ -578,14 +607,30 @@ export function createServer({
         return jsonResponse(response, 401, { error: user.message, requiresVerification: true, email });
       }
       const token = signJwt({ sub: user.id, email: user.email, exp: Date.now() + JWT_EXPIRY_MS });
-      return jsonResponse(response, 200, { user: { id: user.id, email: user.email }, token });
+      return jsonResponse(response, 200, {
+        user: { id: user.id, email: user.email, displayName: user.displayName ?? null },
+        token,
+      });
     }
     if (pathname === "/api/auth/me" && request.method === "GET") {
       const userId = extractUserId(request);
       if (!userId) return jsonResponse(response, 401, { error: "Not authenticated." });
       const user = store.getUserById(userId);
       if (!user) return jsonResponse(response, 404, { error: "User not found." });
-      return jsonResponse(response, 200, { user: { id: user.id, email: user.email } });
+      return jsonResponse(response, 200, {
+        user: { id: user.id, email: user.email, displayName: user.displayName ?? null },
+      });
+    }
+    if (pathname === "/api/auth/profile" && request.method === "PATCH") {
+      checkSameOrigin(request);
+      const userId = extractUserId(request);
+      if (!userId) return jsonResponse(response, 401, { error: "Not authenticated." });
+      const body = await readJson(request);
+      const user = store.updateUserDisplayName(userId, body?.displayName);
+      if (!user) return jsonResponse(response, 404, { error: "User not found." });
+      return jsonResponse(response, 200, {
+        user: { id: user.id, email: user.email, displayName: user.displayName ?? null },
+      });
     }
     if (pathname === "/api/auth/delete-account" && request.method === "DELETE") {
       const userId = extractUserId(request);
@@ -708,10 +753,17 @@ export function createServer({
 
       const textUrl = store.textJobUrl(text);
 
-      // A completed job for the same text already produced a recipe: return it.
+      // A completed job for the same text already produced a recipe this user
+      // can see: return it. Otherwise start a fresh job so each family gets
+      // their own private copy.
       const completed = store
         .getExtractionJobsByUrl(textUrl)
-        .find((job) => job.status === "completed" && job.recipeId);
+        .find(
+          (job) =>
+            job.status === "completed" &&
+            job.recipeId &&
+            store.getRecipe(job.recipeId, userId, isAdminRequest(request)),
+        );
       if (completed) {
         if (store.addFavorite(userId, completed.recipeId)) {
           store.addToHistory(userId, completed.recipeId, "added");
@@ -788,8 +840,12 @@ export function createServer({
       store.recordEvent(userId, "manual_entry", saved.recipe.id);
       store.linkExtractionJobToRecipe(jobId, saved.recipe.id);
       for (const watcherId of store.listJobWatchers(jobId)) {
-        if (store.addFavorite(watcherId, saved.recipe.id)) {
-          store.addToHistory(watcherId, saved.recipe.id, "added");
+        const target =
+          watcherId === userId
+            ? saved.recipe.id
+            : store.saveImported(job.url, recipe, watcherId).recipe.id;
+        if (store.addFavorite(watcherId, target)) {
+          store.addToHistory(watcherId, target, "added");
         }
       }
 
@@ -840,6 +896,7 @@ export function createServer({
       if (result.error) {
         const messages = {
           NOT_FOUND: "Recipe not found.",
+          FORBIDDEN: "Only the recipe's creator can edit it.",
           INVALID_RECIPE: "This recipe's ingredients cannot be edited.",
           INVALID_INDEX: "Ingredient not found.",
           NO_CHANGES: "Provide an amount or a unit.",
@@ -847,15 +904,16 @@ export function createServer({
           INVALID_AMOUNT: "Amount must be a non-negative number.",
           INCOMPATIBLE_UNITS: "Those units cannot be converted.",
         };
-        return jsonResponse(response, result.error === "NOT_FOUND" ? 404 : 400, {
+        return jsonResponse(response, result.error === "NOT_FOUND" ? 404 : result.error === "FORBIDDEN" ? 403 : 400, {
           error: messages[result.error] ?? "Couldn't update the ingredient.",
         });
       }
       return jsonResponse(response, 200, { recipe: result.recipe });
     }
 
-    // Edit a recipe: fields, steps, and Instagram source links. Any signed-in
-    // user may edit; deletion stays creator/admin-only.
+    // Edit a recipe: fields, steps, and Instagram source links. Only the recipe
+    // owner (or site admin) may edit; group admins cannot publish or edit
+    // another family's recipe.
     const editMatch = pathname.match(/^\/api\/recipes\/([^/]+)$/);
     if (editMatch && request.method === "PATCH") {
       checkSameOrigin(request);
@@ -886,11 +944,14 @@ export function createServer({
             INVALID_PORTIONS: "Servings must be between 1 and 1000.",
             INVALID_STEPS: "Add 1-40 steps of up to 1500 characters each.",
             INVALID_IMAGE: "The image reference is invalid.",
+            FORBIDDEN: "Only the recipe's creator can edit it.",
             NO_CHANGES: "No changes were provided.",
           };
-          return jsonResponse(response, result.error === "NOT_FOUND" ? 404 : 400, {
-            error: messages[result.error] ?? "Couldn't update the recipe.",
-          });
+          return jsonResponse(
+            response,
+            result.error === "NOT_FOUND" ? 404 : result.error === "FORBIDDEN" ? 403 : 400,
+            { error: messages[result.error] ?? "Couldn't update the recipe." },
+          );
         }
       }
 
@@ -914,12 +975,15 @@ export function createServer({
         if (sourcesResult.error) {
           const messages = {
             NOT_FOUND: "Recipe not found.",
+            FORBIDDEN: "Only the recipe's creator can edit it.",
             INVALID_LINK: "Enter a valid Instagram post or reel link.",
             LINK_IN_USE: "That Instagram link already belongs to another recipe.",
           };
-          return jsonResponse(response, sourcesResult.error === "NOT_FOUND" ? 404 : 400, {
-            error: messages[sourcesResult.error] ?? "Couldn't update the links.",
-          });
+          return jsonResponse(
+            response,
+            sourcesResult.error === "NOT_FOUND" ? 404 : sourcesResult.error === "FORBIDDEN" ? 403 : 400,
+            { error: messages[sourcesResult.error] ?? "Couldn't update the links." },
+          );
         }
         result = sourcesResult;
       }
@@ -964,9 +1028,11 @@ export function createServer({
 
       const result = store.updateRecipe(imageMatch[1], { imageUrl }, userId, isAdminRequest(request));
       if (result.error) {
-        return jsonResponse(response, result.error === "NOT_FOUND" ? 404 : 400, {
-          error: "Couldn't update the recipe image.",
-        });
+        return jsonResponse(
+          response,
+          result.error === "NOT_FOUND" ? 404 : result.error === "FORBIDDEN" ? 403 : 400,
+          { error: result.error === "FORBIDDEN" ? "Only the recipe's creator can change its photo." : "Couldn't update the recipe image." },
+        );
       }
       return jsonResponse(response, 200, { recipe: result.recipe });
     }
@@ -984,7 +1050,25 @@ export function createServer({
         return jsonResponse(response, 403, { error: "Only the recipe's creator or the site owner can delete it." });
       }
 
-      store.deleteRecipe(deleteMatch[1]);
+      const removed = store.deleteRecipe(deleteMatch[1]);
+      if (removed?.classMediaFiles?.length) {
+        for (const filename of removed.classMediaFiles) {
+          try {
+            unlinkSync(resolve(classMediaDir, filename));
+          } catch {
+            // Already gone.
+          }
+        }
+      }
+      if (removed?.mediaFiles?.length) {
+        for (const filename of removed.mediaFiles) {
+          try {
+            unlinkSync(resolve(mediaDir, filename));
+          } catch {
+            // Already gone.
+          }
+        }
+      }
       return jsonResponse(response, 200, { ok: true });
     }
 
@@ -1139,7 +1223,12 @@ export function createServer({
       return jsonResponse(response, 200, { ok: true });
     }
     if (pathname.startsWith("/api/")) {
+      if (await classRouter(request, response, pathname, url)) return;
       return jsonResponse(response, 404, { error: "API endpoint not found." });
+    }
+    if (publicPageHandler(request, response, pathname)) return;
+    if (pathname.startsWith("/media/class/")) {
+      if (await classRouter(request, response, pathname, url)) return;
     }
     if (sendMediaFile(request, response, mediaDir)) return;
     if (sendStaticFile(request, response)) return;
