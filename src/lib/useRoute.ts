@@ -9,6 +9,7 @@ export type Route =
   | { name: "public"; id: string }
   | { name: "notifications" }
   | { name: "adminReports" }
+  | { name: "privacy" }
   | { name: "notFound" };
 
 export function parseRoute(pathname: string): Route {
@@ -17,6 +18,7 @@ export function parseRoute(pathname: string): Route {
   if (pathname === "/classes") return { name: "classes" };
   if (pathname === "/notifications") return { name: "notifications" };
   if (pathname === "/admin/reports") return { name: "adminReports" };
+  if (pathname === "/privacy") return { name: "privacy" };
   const classMatch = pathname.match(/^\/classes\/([^/]+)\/?$/);
   if (classMatch) return { name: "class", id: decodeURIComponent(classMatch[1]) };
   const joinMatch = pathname.match(/^\/join\/([^/]+)\/?$/);

@@ -16,11 +16,13 @@ export function PublicRecipeScreen({
   token,
   onBack,
   onNeedAuth,
+  onOpenPrivacy,
 }: {
   recipeId: string;
   token: string | null;
   onBack: () => void;
   onNeedAuth: () => void;
+  onOpenPrivacy: () => void;
 }) {
   const [recipe, setRecipe] = useState<PublicRecipe | null>(null);
   const [error, setError] = useState("");
@@ -228,6 +230,9 @@ export function PublicRecipeScreen({
 
         <button type="button" className="link-btn" onClick={() => (token ? setShowReport(true) : onNeedAuth())}>
           Report this recipe
+        </button>
+        <button type="button" className="link-btn muted" onClick={onOpenPrivacy}>
+          What gets shared publicly?
         </button>
         {reportSent && <p className="helper">Thanks — the site admin will review it.</p>}
       </div>

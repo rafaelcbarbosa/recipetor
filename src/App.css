@@ -2106,6 +2106,11 @@ button.queue-row {
   color: #a32b1f;
 }
 
+.link-btn.muted {
+  color: var(--muted);
+  font-weight: 500;
+}
+
 .primary-btn.is-saved {
   background: var(--herb);
 }
@@ -3032,4 +3037,21 @@ button.queue-row {
   color: var(--muted);
   font-size: 12px;
   font-weight: 600;
+}
+
+.privacy-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.privacy-list {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+
+.privacy-list li {
+  margin: 5px 0;
 }

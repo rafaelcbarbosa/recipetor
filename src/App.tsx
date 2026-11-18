@@ -9,6 +9,7 @@ import { PublicRecipeScreen } from "./features/PublicRecipeScreen";
 import { JoinScreen } from "./features/JoinScreen";
 import { NotificationsScreen } from "./features/NotificationsScreen";
 import { AdminReportsScreen } from "./features/AdminReportsScreen";
+import { PrivacyScreen } from "./features/PrivacyScreen";
 import { CookModeOverlay, VisibilitySheet } from "./features/RecipeTools";
 
 type Nutrition = {
@@ -1936,6 +1937,7 @@ function App() {
         onJoin={(code) => navigate(`/join/${code}`)}
         onOpenNotifications={() => navigate("/notifications")}
         onOpenReports={() => navigate("/admin/reports")}
+        onOpenPrivacy={() => navigate("/privacy")}
       />
     ) : route.name === "class" ? (
       <ClassDetailScreen
@@ -1966,6 +1968,7 @@ function App() {
         token={token}
         onBack={() => navigate("/discover")}
         onNeedAuth={() => setAuthMode("login")}
+        onOpenPrivacy={() => navigate("/privacy")}
       />
     ) : route.name === "notifications" ? (
       <NotificationsScreen
@@ -1979,6 +1982,8 @@ function App() {
         onBack={() => navigate("/classes")}
         onOpenRecipe={(id) => navigate(`/r/${id}`)}
       />
+    ) : route.name === "privacy" ? (
+      <PrivacyScreen onBack={() => navigate("/")} />
     ) : route.name === "notFound" ? (
       <div className="app feature-app">
         <div className="screen">

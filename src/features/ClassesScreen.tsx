@@ -8,6 +8,7 @@ export function ClassesScreen({
   onJoin,
   onOpenNotifications,
   onOpenReports,
+  onOpenPrivacy,
   onBack,
 }: {
   token: string | null;
@@ -15,6 +16,7 @@ export function ClassesScreen({
   onJoin: (code: string) => void;
   onOpenNotifications: () => void;
   onOpenReports: () => void;
+  onOpenPrivacy: () => void;
   onBack: () => void;
 }) {
   const [classes, setClasses] = useState<ClassSummary[]>([]);
@@ -164,6 +166,10 @@ export function ClassesScreen({
             Review reported recipes{reportsCount > 0 ? ` (${reportsCount})` : ""}
           </button>
         )}
+
+        <button type="button" className="link-btn muted" onClick={onOpenPrivacy}>
+          Privacy & terms
+        </button>
       </div>
 
       {showCreate && (

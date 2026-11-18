@@ -13,6 +13,7 @@ export default defineConfig({
       "/discover": "http://127.0.0.1:8787",
       "/notifications": "http://127.0.0.1:8787",
       "/admin": "http://127.0.0.1:8787",
+      "/privacy": "http://127.0.0.1:8787",
       "/telemetry": "http://127.0.0.1:8787",
     },
   },
