@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
 import "./App.css";
 import { compatibleUnits, isConvertibleUnit, isKnownUnit, normalizeUnit, UNIT_GROUPS } from "./units";
+import { useRoute } from "./lib/useRoute";
+import { ClassesScreen } from "./features/ClassesScreen";
+import { ClassDetailScreen } from "./features/ClassDetail";
+import { DiscoverScreen } from "./features/DiscoverScreen";
+import { PublicRecipeScreen } from "./features/PublicRecipeScreen";
+import { JoinScreen } from "./features/JoinScreen";
+import { NotificationsScreen } from "./features/NotificationsScreen";
+import { AdminReportsScreen } from "./features/AdminReportsScreen";
+import { CookModeOverlay, VisibilitySheet } from "./features/RecipeTools";
 
 type Nutrition = {
   calories: number | null;
@@ -45,6 +54,13 @@ type Recipe = {
   isFavorite?: boolean;
   myRating?: number | null;
   canDelete?: boolean;
+  canEdit?: boolean;
+  visibility?: "private" | "class" | "public";
+  classIds?: string[];
+  sourceUrl?: string | null;
+  sourceCredit?: string | null;
+  allergenTags?: string[];
+  stepJobs?: string[];
   isExample?: boolean;
 };
 
@@ -83,7 +99,7 @@ type ImportJob = {
   recipeId?: string | null;
 };
 
-type User = { id: string; email: string };
+type User = { id: string; email: string; displayName?: string | null };
 type AuthMode = "login" | "register" | "verify" | "forgot-password" | "reset-password" | null;
 type Tab = "recipes" | "add" | "favorites";
 type DetailOrigin = "library" | "favorites" | "queue" | "history";
@@ -211,6 +227,13 @@ function Icon({
         <path d="M4 21c0-4 4-6 8-6s8 2 8 6" />
       </>
     ),
+    users: (
+      <>
+        <circle cx="9" cy="8" r="3.6" />
+        <path d="M2.5 20c0-3.4 3.3-5.2 6.5-5.2s6.5 1.8 6.5 5.2" />
+        <path d="M16 5.2a3.4 3.4 0 0 1 0 6.6M18 14.6c2.2.5 3.8 2 3.8 4.4" />
+      </>
+    ),
     clock: (
       <>
         <circle cx="12" cy="12" r="9" />
@@ -303,10 +326,14 @@ function TopBar({
   onAccount,
   onBacklog,
   backlogCount,
+  onClasses,
+  classBadge,
 }: {
   onAccount: () => void;
   onBacklog: () => void;
   backlogCount: number;
+  onClasses: () => void;
+  classBadge: number;
 }) {
   return (
     <header className="topbar">
@@ -317,6 +344,10 @@ function TopBar({
         <h1>Recipetor</h1>
       </div>
       <div className="topbar-actions">
+        <button type="button" className="round-btn glass classes-btn" aria-label="Classes" onClick={onClasses}>
+          <Icon name="users" />
+          {classBadge > 0 && <span className="backlog-badge">{classBadge > 9 ? "9+" : classBadge}</span>}
+        </button>
         <button
           type="button"
           className="round-btn glass backlog-btn"
@@ -418,6 +449,10 @@ function EmptyState({ title, body }: { title: string; body: string }) {
 }
 
 function App() {
+  const { route, navigate } = useRoute();
+  const [classBadge, setClassBadge] = useState(0);
+  const [showVisibility, setShowVisibility] = useState(false);
+  const [showCookMode, setShowCookMode] = useState(false);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem("recipetor_token"));
   const [user, setUser] = useState<User | null>(null);
   const [authMode, setAuthMode] = useState<AuthMode>(null);
@@ -485,6 +520,8 @@ function App() {
   const [editPrep, setEditPrep] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editSteps, setEditSteps] = useState("");
+  const [editAllergens, setEditAllergens] = useState("");
+  const [editStepJobs, setEditStepJobs] = useState("");
   const [editLinks, setEditLinks] = useState<string[]>([]);
   const [editNewLink, setEditNewLink] = useState("");
   const [editImageFile, setEditImageFile] = useState<File | null>(null);
@@ -522,6 +559,49 @@ function App() {
     },
     [token],
   );
+
+  const openRecipeById = useCallback(
+    async (recipeId: string) => {
+      navigate("/");
+      try {
+        const response = await apiFetch(`/api/recipes/${recipeId}`);
+        if (!response.ok) return;
+        const data = (await response.json()) as { recipe: Recipe };
+        setDetail(data.recipe);
+        setDetailOrigin("library");
+        setServings(data.recipe.baseServings ?? data.recipe.basePortions ?? null);
+      } catch {
+        // The recipe may have been made private.
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [apiFetch, navigate],
+  );
+
+  useEffect(() => {
+    if (!token) {
+      setClassBadge(0);
+      return;
+    }
+    let cancelled = false;
+    apiFetch("/api/classes")
+      .then(async (response) => {
+        if (!response.ok) return;
+        const data = (await response.json()) as { classes?: Array<{ pendingApprovals?: number; status?: string }> };
+        if (cancelled) return;
+        let count = 0;
+        for (const item of data.classes ?? []) {
+          count += item.pendingApprovals ?? 0;
+          if (item.status === "pending") count += 1;
+        }
+        setClassBadge(count);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, route.name]);
 
   const refreshQueue = useCallback(async () => {
     if (queueLoadedAt.current == null) queueLoadedAt.current = Date.now();
@@ -1267,6 +1347,8 @@ function App() {
     setEditPrep(recipe.prepTimeMinutes != null ? String(recipe.prepTimeMinutes) : "");
     setEditDescription(recipe.description ?? "");
     setEditSteps((recipe.steps ?? []).join("\n"));
+    setEditAllergens((recipe.allergenTags ?? []).join(", "));
+    setEditStepJobs((recipe.stepJobs ?? []).join("\n"));
     setEditLinks(recipe.sourceUrls ?? []);
     setEditNewLink("");
     setEditImageFile(null);
@@ -1351,6 +1433,16 @@ function App() {
     }
 
     setIsSavingEdit(true);
+    const allergenTags = editAllergens
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean)
+      .slice(0, 12);
+    const stepJobs = editStepJobs
+      .split("\n")
+      .map((job) => job.trim())
+      .slice(0, steps.length);
+    while (stepJobs.length < steps.length) stepJobs.push("");
     try {
       const response = await apiFetch(`/api/recipes/${editSheet.id}`, {
         method: "PATCH",
@@ -1362,6 +1454,8 @@ function App() {
           prepTimeMinutes: prep,
           basePortions: servings,
           steps,
+          allergenTags,
+          stepJobs,
           sourceUrls: editLinks,
           ...(editImageRemoved ? { imageUrl: null } : {}),
         }),
@@ -1603,6 +1697,7 @@ function App() {
     const formData = new FormData(event.currentTarget);
     const email = formData.get("email")?.toString().trim().toLowerCase();
     const password = formData.get("password")?.toString();
+    const displayName = formData.get("displayName")?.toString().trim() ?? "";
     const code = formData.get("code")?.toString().trim();
     const newPassword = formData.get("newPassword")?.toString();
 
@@ -1665,7 +1760,7 @@ function App() {
       const response = await apiFetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, displayName: authMode === "register" ? displayName : undefined }),
       });
       const data = (await response.json()) as {
         error?: string;
@@ -1832,14 +1927,80 @@ function App() {
         ? "Try another search or filter."
         : "Add a recipe from Instagram to get started.";
 
-  const content = detail ? (
+  const featureView =
+    route.name === "classes" ? (
+      <ClassesScreen
+        token={token}
+        onBack={() => navigate("/")}
+        onOpenClass={(id) => navigate(`/classes/${id}`)}
+        onJoin={(code) => navigate(`/join/${code}`)}
+        onOpenNotifications={() => navigate("/notifications")}
+        onOpenReports={() => navigate("/admin/reports")}
+      />
+    ) : route.name === "class" ? (
+      <ClassDetailScreen
+        classId={route.id}
+        token={token}
+        onBack={() => navigate("/classes")}
+        onOpenRecipe={(id) => void openRecipeById(id)}
+        onOpenLibrary={() => navigate("/")}
+      />
+    ) : route.name === "join" ? (
+      <JoinScreen
+        code={route.code}
+        token={token}
+        onNeedAuth={() => setAuthMode("login")}
+        onOpenClass={(id) => navigate(`/classes/${id}`)}
+        onBack={() => navigate("/")}
+      />
+    ) : route.name === "discover" ? (
+      <DiscoverScreen
+        token={token}
+        onBack={() => navigate("/")}
+        onOpenRecipe={(id) => navigate(`/r/${id}`)}
+        onNeedAuth={() => setAuthMode("login")}
+      />
+    ) : route.name === "public" ? (
+      <PublicRecipeScreen
+        recipeId={route.id}
+        token={token}
+        onBack={() => navigate("/discover")}
+        onNeedAuth={() => setAuthMode("login")}
+      />
+    ) : route.name === "notifications" ? (
+      <NotificationsScreen
+        token={token}
+        onBack={() => navigate("/classes")}
+        onOpenClass={(id) => navigate(`/classes/${id}`)}
+      />
+    ) : route.name === "adminReports" ? (
+      <AdminReportsScreen
+        token={token}
+        onBack={() => navigate("/classes")}
+        onOpenRecipe={(id) => navigate(`/r/${id}`)}
+      />
+    ) : route.name === "notFound" ? (
+      <div className="app feature-app">
+        <div className="screen">
+          <div className="empty-state">
+            <p className="empty-title">Page not found</p>
+            <p className="empty-body">That link doesn't go anywhere.</p>
+          </div>
+          <button type="button" className="primary-btn" onClick={() => navigate("/")}>
+            Go home
+          </button>
+        </div>
+      </div>
+    ) : null;
+
+  const content = featureView ? featureView : detail ? (
     <div className="screen detail">
       <header className="detail-topbar">
         <button type="button" className="round-btn glass" aria-label="Back" onClick={closeDetail}>
           <Icon name="chevron-left" />
         </button>
         <div className="detail-actions">
-          {user && (
+          {user && detail.canEdit && (
             <button
               type="button"
               className="round-btn glass"
@@ -1888,6 +2049,21 @@ function App() {
         </p>
       </div>
 
+      <div className="detail-tools">
+        {detail.canEdit && (
+          <button type="button" className="tool-btn" onClick={() => setShowVisibility(true)}>
+            {detail.visibility === "public"
+              ? "🌍 Public"
+              : detail.visibility === "class"
+                ? "🏫 Class only"
+                : "🔒 Private"}
+          </button>
+        )}
+        <button type="button" className="tool-btn" onClick={() => setShowCookMode(true)}>
+          👩‍🍳 Cook mode
+        </button>
+      </div>
+
       <div className="tag-row">
         {detailMeal && <span className="detail-tag meal">{detailMeal}</span>}
         {detail.cuisine && <span className="detail-tag">{detail.cuisine}</span>}
@@ -1900,6 +2076,17 @@ function App() {
           + Add tag
         </button>
       </div>
+
+      {(detail.allergenTags?.length ?? 0) > 0 && (
+        <div className="allergen-row" aria-label="Allergens">
+          <span className="allergen-label">Contains</span>
+          {detail.allergenTags?.map((tag) => (
+            <span key={tag} className="allergen-tag">
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
 
       <div className="rating-row">
         <span>Your rating</span>
@@ -2212,6 +2399,8 @@ function App() {
         onAccount={() => setShowAccount(true)}
         onBacklog={openBacklog}
         backlogCount={activeJobs.length}
+        onClasses={() => navigate("/classes")}
+        classBadge={classBadge}
       />
       <h2 className="page-heading">Add a recipe</h2>
       <div className="add-modes" role="group" aria-label="How to add a recipe">
@@ -2336,7 +2525,13 @@ function App() {
         onAccount={() => setShowAccount(true)}
         onBacklog={openBacklog}
         backlogCount={activeJobs.length}
+        onClasses={() => navigate("/classes")}
+        classBadge={classBadge}
       />
+
+      <button type="button" className="feature-banner" onClick={() => navigate("/discover")}>
+        🌍 Discover recipes shared by other families
+      </button>
 
       {tab === "favorites" && !user ? (
         <div className="signin-gate">
@@ -2444,7 +2639,28 @@ function App() {
         </div>
       )}
       {content}
-      {!detail && !showQueue && !showHistory && <TabBar tab={tab} onChange={setTab} />}
+      {showVisibility && detail && (
+        <VisibilitySheet
+          recipeId={detail.id}
+          visibility={detail.visibility ?? "private"}
+          classIds={detail.classIds ?? []}
+          token={token}
+          onClose={() => setShowVisibility(false)}
+          onSaved={(visibility, classIds) =>
+            setDetail((current) => (current ? { ...current, visibility, classIds } : current))
+          }
+        />
+      )}
+      {showCookMode && detail && (
+        <CookModeOverlay
+          title={detail.title}
+          ingredients={detail.ingredients ?? []}
+          steps={detail.steps ?? []}
+          stepJobs={detail.stepJobs ?? []}
+          onClose={() => setShowCookMode(false)}
+        />
+      )}
+      {!detail && !showQueue && !showHistory && route.name === "library" && <TabBar tab={tab} onChange={setTab} />}
       {showAccount && (
         <div
           className="sheet-backdrop"
@@ -2847,6 +3063,26 @@ function App() {
                 rows={6}
                 value={editSteps}
                 onChange={(event) => setEditSteps(event.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="edit-allergens">Allergen tags (optional)</label>
+              <input
+                id="edit-allergens"
+                value={editAllergens}
+                onChange={(event) => setEditAllergens(event.target.value)}
+                placeholder="nuts, dairy, gluten, eggs"
+                maxLength={200}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="edit-step-jobs">Kid jobs (optional, one per step)</label>
+              <textarea
+                id="edit-step-jobs"
+                rows={3}
+                value={editStepJobs}
+                onChange={(event) => setEditStepJobs(event.target.value)}
+                placeholder={"Stir the sauce\nSprinkle the cheese"}
               />
             </div>
 
@@ -3278,6 +3514,19 @@ function App() {
               </form>
             ) : (
               <form className="auth-form" onSubmit={handleAuth}>
+                {authMode === "register" && (
+                  <div className="field">
+                    <label htmlFor="auth-name">Your name (optional)</label>
+                    <input
+                      id="auth-name"
+                      name="displayName"
+                      type="text"
+                      autoComplete="name"
+                      placeholder="Alex"
+                      maxLength={80}
+                    />
+                  </div>
+                )}
                 <div className="field">
                   <label htmlFor="auth-email">Email</label>
                   <input

@@ -35,6 +35,9 @@ self.addEventListener("fetch", (event) => {
     // API responses are always live: caching them would hide outages behind
     // stale data and prevent the app from noticing a dropped connection.
     url.pathname.startsWith("/api/") ||
+    // Private class photos use short-lived signed URLs. Never write them to
+    // the shared cache where another person on the device could find them.
+    url.pathname.startsWith("/media/class/") ||
     (request.mode !== "navigate" && !url.pathname.startsWith("/assets/"))
   ) {
     return;

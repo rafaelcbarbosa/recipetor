@@ -1,5 +1,5 @@
 {
-  "hash": "30f5991",
-  "date": "2026-11-14 11:57:48 -0600",
-  "message": "Store extraction logs for every job and show them in telemetry"
+  "hash": "c3ad7b0",
+  "date": "2026-11-16 17:39:56 -0600",
+  "message": "Record anonymous accesses with device metadata and expand telemetry"
 }
